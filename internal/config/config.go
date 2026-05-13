@@ -55,6 +55,7 @@ func Load(path string) (Config, error) {
 		}
 		path = paths.Config
 	}
+	// #nosec G304 -- local CLI intentionally reads an explicit user config path.
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		cfg.DefaultLimit = 50

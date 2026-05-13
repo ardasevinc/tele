@@ -1,0 +1,11 @@
+.DS_Store
+
+# Build/test output
+/bin/
+/dist/
+/coverage.out
+
+# Local tele state should never be committed.
+/.tele/
+*.session
+*.log

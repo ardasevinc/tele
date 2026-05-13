@@ -386,7 +386,9 @@ func configCommand(s *appState) *cobra.Command {
 				if len(args) == 2 {
 					hash = args[1]
 				} else {
-					fmt.Fprint(s.err, "api_hash: ")
+					if _, err := fmt.Fprint(s.err, "api_hash: "); err != nil {
+						return err
+					}
 					var line string
 					if _, err := fmt.Fscanln(s.in, &line); err != nil {
 						return err

@@ -3,6 +3,9 @@ package telegram
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +29,7 @@ import (
 )
 
 const apiHashKey = "api-hash"
+const authPendingKey = "auth-pending"
 
 var (
 	loginCodeLineRE = regexp.MustCompile(`(?i)(login code:\s*)[A-Za-z0-9_-]+`)
@@ -61,6 +65,41 @@ type LoginOptions struct {
 	Code           string
 	Password       string
 	NonInteractive bool
+}
+
+type AuthStartStatus struct {
+	Profile           string `json:"profile"`
+	Phone             string `json:"phone"`
+	CodeSent          bool   `json:"code_sent"`
+	CodeType          string `json:"code_type,omitempty"`
+	TimeoutSeconds    int    `json:"timeout_seconds,omitempty"`
+	AlreadyAuthorized bool   `json:"already_authorized,omitempty"`
+}
+
+type ReadOptions struct {
+	Peer          string
+	Limit         int
+	Since         time.Time
+	Until         time.Time
+	AfterID       int
+	BeforeID      int
+	AroundID      int
+	Chronological bool
+}
+
+type MutationResult struct {
+	OK         bool   `json:"ok"`
+	Action     string `json:"action"`
+	PeerRef    string `json:"peer_ref"`
+	MessageID  int    `json:"message_id,omitempty"`
+	MessageIDs []int  `json:"message_ids,omitempty"`
+	Timestamp  string `json:"timestamp"`
+}
+
+type authPending struct {
+	Phone         string `json:"phone"`
+	PhoneCodeHash string `json:"phone_code_hash"`
+	CreatedAt     string `json:"created_at"`
 }
 
 func (a App) SetAPIHash(ctx context.Context, hash string) error {
@@ -144,6 +183,82 @@ func (a App) Login(ctx context.Context, opts LoginOptions) (AuthStatus, error) {
 	return status, err
 }
 
+func (a App) AuthStart(ctx context.Context, phone string) (AuthStartStatus, error) {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return AuthStartStatus{}, fmt.Errorf("phone is required")
+	}
+	status := AuthStartStatus{Profile: a.Profile, Phone: phone}
+	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
+		authStatus, err := c.Auth().Status(ctx)
+		if err != nil {
+			return err
+		}
+		if authStatus != nil && authStatus.Authorized {
+			status.AlreadyAuthorized = true
+			return nil
+		}
+		sent, err := c.Auth().SendCode(ctx, phone, auth.SendCodeOptions{})
+		if err != nil {
+			return err
+		}
+		code, ok := sent.(*tg.AuthSentCode)
+		if !ok {
+			return fmt.Errorf("unsupported auth sent code response %T", sent)
+		}
+		pending := authPending{
+			Phone:         phone,
+			PhoneCodeHash: code.PhoneCodeHash,
+			CreatedAt:     time.Now().UTC().Format(time.RFC3339),
+		}
+		if err := a.savePendingAuth(ctx, pending); err != nil {
+			return err
+		}
+		status.CodeSent = true
+		if code.Type != nil {
+			status.CodeType = code.Type.TypeName()
+		}
+		if timeout, ok := code.GetTimeout(); ok {
+			status.TimeoutSeconds = timeout
+		}
+		return nil
+	})
+	return status, err
+}
+
+func (a App) AuthComplete(ctx context.Context, code, password string) (AuthStatus, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return AuthStatus{}, fmt.Errorf("code is required")
+	}
+	pending, err := a.pendingAuth(ctx)
+	if err != nil {
+		return AuthStatus{}, err
+	}
+	status := AuthStatus{Profile: a.Profile}
+	err = a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
+		if _, err := c.Auth().SignIn(ctx, pending.Phone, code, pending.PhoneCodeHash); err != nil {
+			if !errors.Is(err, auth.ErrPasswordAuthNeeded) {
+				return err
+			}
+			password = strings.TrimSpace(password)
+			if password == "" {
+				return auth.ErrPasswordNotProvided
+			}
+			if _, err := c.Auth().Password(ctx, password); err != nil {
+				return err
+			}
+		}
+		s, err := c.Auth().Status(ctx)
+		if err != nil {
+			return err
+		}
+		status = statusFromGotd(a.Profile, s)
+		return a.Secrets.Delete(ctx, a.Profile, authPendingKey)
+	})
+	return status, err
+}
+
 func (a App) Status(ctx context.Context) (AuthStatus, error) {
 	status := AuthStatus{Profile: a.Profile}
 	if _, err := os.Stat(a.sessionPath()); errors.Is(err, os.ErrNotExist) {
@@ -174,13 +289,16 @@ func (a App) Logout(ctx context.Context) error {
 }
 
 type Chat struct {
-	Ref          string `json:"ref"`
-	Kind         string `json:"kind"`
-	ID           int64  `json:"id"`
-	Title        string `json:"title"`
-	Username     string `json:"username,omitempty"`
-	UnreadCount  int    `json:"unread_count"`
-	TopMessageID int    `json:"top_message_id,omitempty"`
+	Ref                 string `json:"ref"`
+	Kind                string `json:"kind"`
+	ID                  int64  `json:"id"`
+	Title               string `json:"title"`
+	Username            string `json:"username,omitempty"`
+	UnreadCount         int    `json:"unread_count"`
+	UnreadMentionsCount int    `json:"unread_mentions_count,omitempty"`
+	TopMessageID        int    `json:"top_message_id,omitempty"`
+	LastMessageDate     string `json:"last_message_date,omitempty"`
+	LastMessagePreview  string `json:"last_message_preview,omitempty"`
 }
 
 func (a App) Chats(ctx context.Context, limit int) ([]Chat, error) {
@@ -200,6 +318,28 @@ func (a App) Chats(ctx context.Context, limit int) ([]Chat, error) {
 	return out, err
 }
 
+func (a App) Inbox(ctx context.Context, limit int, mode string) ([]Chat, error) {
+	chats, err := a.Chats(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := chats[:0]
+	for _, chat := range chats {
+		switch mode {
+		case "unread":
+			if chat.UnreadCount == 0 {
+				continue
+			}
+		case "mentions":
+			if chat.UnreadMentionsCount == 0 {
+				continue
+			}
+		}
+		out = append(out, chat)
+	}
+	return out, nil
+}
+
 type Message struct {
 	ID            int      `json:"id"`
 	Date          string   `json:"date,omitempty"`
@@ -213,20 +353,46 @@ type Message struct {
 }
 
 func (a App) History(ctx context.Context, peerToken string, limit int) ([]Message, error) {
+	return a.Read(ctx, ReadOptions{Peer: peerToken, Limit: limit})
+}
+
+func (a App) Read(ctx context.Context, opts ReadOptions) ([]Message, error) {
 	var out []Message
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
-		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
+		input, peerRef, err := a.resolvePeer(ctx, c, opts.Peer)
 		if err != nil {
 			return err
 		}
-		res, err := c.API().MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
+		req := &tg.MessagesGetHistoryRequest{
 			Peer:  input,
-			Limit: limit,
+			Limit: opts.Limit,
+		}
+		if !opts.Until.IsZero() {
+			req.OffsetDate = int(opts.Until.Unix())
+		}
+		if opts.AfterID > 0 {
+			req.MinID = opts.AfterID
+		}
+		if opts.BeforeID > 0 {
+			req.MaxID = opts.BeforeID
+		}
+		if opts.AroundID > 0 {
+			req.OffsetID = opts.AroundID
+			req.AddOffset = -(opts.Limit / 2)
+		}
+		res, err := c.API().MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
+			Peer:       req.Peer,
+			OffsetID:   req.OffsetID,
+			OffsetDate: req.OffsetDate,
+			AddOffset:  req.AddOffset,
+			Limit:      req.Limit,
+			MaxID:      req.MaxID,
+			MinID:      req.MinID,
 		})
 		if err != nil {
 			return err
 		}
-		out = messagesFromResult(peerRef.Ref, res)
+		out = filterMessages(messagesFromResult(peerRef.Ref, res), opts)
 		return nil
 	})
 	return out, err
@@ -257,6 +423,128 @@ func (a App) Search(ctx context.Context, query, peerToken string, limit int) ([]
 		return nil
 	})
 	return out, err
+}
+
+func (a App) Send(ctx context.Context, peerToken, text string, replyTo int) (MutationResult, error) {
+	return a.send(ctx, peerToken, text, replyTo, "send")
+}
+
+func (a App) Edit(ctx context.Context, peerToken string, msgID int, text string) (MutationResult, error) {
+	var out MutationResult
+	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
+		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
+		if err != nil {
+			return err
+		}
+		req := &tg.MessagesEditMessageRequest{Peer: input, ID: msgID}
+		req.SetMessage(strings.TrimSpace(text))
+		if _, err := c.API().MessagesEditMessage(ctx, req); err != nil {
+			return err
+		}
+		out = mutationResult("edit", peerRef.Ref, msgID)
+		return nil
+	})
+	return out, err
+}
+
+func (a App) React(ctx context.Context, peerToken string, msgID int, emoji string) (MutationResult, error) {
+	var out MutationResult
+	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
+		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
+		if err != nil {
+			return err
+		}
+		req := &tg.MessagesSendReactionRequest{
+			Peer:        input,
+			MsgID:       msgID,
+			AddToRecent: true,
+		}
+		req.SetReaction([]tg.ReactionClass{&tg.ReactionEmoji{Emoticon: strings.TrimSpace(emoji)}})
+		if _, err := c.API().MessagesSendReaction(ctx, req); err != nil {
+			return err
+		}
+		out = mutationResult("react", peerRef.Ref, msgID)
+		return nil
+	})
+	return out, err
+}
+
+func (a App) DeleteMessage(ctx context.Context, peerToken string, msgID int, revoke bool) (MutationResult, error) {
+	var out MutationResult
+	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
+		_, peerRef, err := a.resolvePeer(ctx, c, peerToken)
+		if err != nil {
+			return err
+		}
+		switch peerRef.Kind {
+		case "channel", "supergroup":
+			_, err = c.API().ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{
+				Channel: &tg.InputChannel{ChannelID: peerRef.ID, AccessHash: peerRef.AccessHash},
+				ID:      []int{msgID},
+			})
+		default:
+			req := &tg.MessagesDeleteMessagesRequest{ID: []int{msgID}}
+			req.SetRevoke(revoke)
+			_, err = c.API().MessagesDeleteMessages(ctx, req)
+		}
+		if err != nil {
+			return err
+		}
+		out = mutationResult("delete", peerRef.Ref, msgID)
+		out.MessageIDs = []int{msgID}
+		return nil
+	})
+	return out, err
+}
+
+func (a App) send(ctx context.Context, peerToken, text string, replyTo int, action string) (MutationResult, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return MutationResult{}, fmt.Errorf("message text is required")
+	}
+	var out MutationResult
+	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
+		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
+		if err != nil {
+			return err
+		}
+		req := &tg.MessagesSendMessageRequest{
+			Peer:      input,
+			Message:   text,
+			RandomID:  randomID(),
+			NoWebpage: true,
+		}
+		if replyTo > 0 {
+			req.SetReplyTo(&tg.InputReplyToMessage{ReplyToMsgID: replyTo})
+		}
+		updates, err := c.API().MessagesSendMessage(ctx, req)
+		if err != nil {
+			return err
+		}
+		out = mutationResult(action, peerRef.Ref, sentMessageID(updates))
+		return nil
+	})
+	return out, err
+}
+
+func (a App) pendingAuth(ctx context.Context) (authPending, error) {
+	var pending authPending
+	b, err := a.Secrets.Get(ctx, a.Profile, authPendingKey)
+	if errors.Is(err, secrets.ErrNotFound) {
+		return pending, fmt.Errorf("no pending auth; run tele auth start first")
+	}
+	if err != nil {
+		return pending, err
+	}
+	return pending, json.Unmarshal(b, &pending)
+}
+
+func (a App) savePendingAuth(ctx context.Context, pending authPending) error {
+	b, err := json.Marshal(pending)
+	if err != nil {
+		return err
+	}
+	return a.Secrets.Set(ctx, a.Profile, authPendingKey, b)
 }
 
 func (a App) resolvePeer(ctx context.Context, c *telegram.Client, token string) (tg.InputPeerClass, peerstore.Peer, error) {
@@ -309,20 +597,24 @@ func userToAccount(u *tg.User) *Account {
 func chatsFromDialogs(dialogs tg.MessagesDialogsClass) ([]Chat, []peerstore.Peer) {
 	var items []Chat
 	var peers []peerstore.Peer
-	addPeer := func(p peerstore.Peer, unread, top int) {
+	addPeer := func(p peerstore.Peer, unread, mentions, top int, preview messagePreview) {
 		peers = append(peers, p)
 		items = append(items, Chat{
-			Ref:          p.Ref,
-			Kind:         p.Kind,
-			ID:           p.ID,
-			Title:        p.Title,
-			Username:     p.Username,
-			UnreadCount:  unread,
-			TopMessageID: top,
+			Ref:                 p.Ref,
+			Kind:                p.Kind,
+			ID:                  p.ID,
+			Title:               p.Title,
+			Username:            p.Username,
+			UnreadCount:         unread,
+			UnreadMentionsCount: mentions,
+			TopMessageID:        top,
+			LastMessageDate:     preview.Date,
+			LastMessagePreview:  preview.Text,
 		})
 	}
-	handle := func(dialogs []tg.DialogClass, users []tg.UserClass, chats []tg.ChatClass) {
+	handle := func(dialogs []tg.DialogClass, messages []tg.MessageClass, users []tg.UserClass, chats []tg.ChatClass) {
 		peerByID := map[string]peerstore.Peer{}
+		previewByID := messagePreviews(messages)
 		for _, u := range users {
 			if user, ok := u.(*tg.User); ok {
 				if p, ok := peerstore.FromUser(user); ok {
@@ -350,17 +642,41 @@ func chatsFromDialogs(dialogs tg.MessagesDialogsClass) ([]Chat, []peerstore.Peer
 			}
 			key := peerKey(dialog.Peer)
 			if p, ok := peerByID[key]; ok {
-				addPeer(p, dialog.UnreadCount, dialog.TopMessage)
+				addPeer(p, dialog.UnreadCount, dialog.UnreadMentionsCount, dialog.TopMessage, previewByID[dialog.TopMessage])
 			}
 		}
 	}
 	switch v := dialogs.(type) {
 	case *tg.MessagesDialogs:
-		handle(v.Dialogs, v.Users, v.Chats)
+		handle(v.Dialogs, v.Messages, v.Users, v.Chats)
 	case *tg.MessagesDialogsSlice:
-		handle(v.Dialogs, v.Users, v.Chats)
+		handle(v.Dialogs, v.Messages, v.Users, v.Chats)
 	}
 	return items, peers
+}
+
+type messagePreview struct {
+	Date string
+	Text string
+}
+
+func messagePreviews(messages []tg.MessageClass) map[int]messagePreview {
+	out := map[int]messagePreview{}
+	for _, cls := range messages {
+		switch msg := cls.(type) {
+		case *tg.Message:
+			text := strings.TrimSpace(redactSensitiveText(msg.Message))
+			if text == "" {
+				if media, ok := msg.GetMedia(); ok {
+					text = "[" + media.TypeName() + "]"
+				}
+			}
+			out[msg.ID] = messagePreview{Date: unixDate(msg.Date), Text: text}
+		case *tg.MessageService:
+			out[msg.ID] = messagePreview{Date: unixDate(msg.Date), Text: "[" + msg.Action.TypeName() + "]"}
+		}
+	}
+	return out
 }
 
 func peerKey(p tg.PeerClass) string {
@@ -416,6 +732,102 @@ func messagesFromResult(sourcePeer string, res tg.MessagesMessagesClass) []Messa
 		}
 	}
 	return out
+}
+
+func filterMessages(messages []Message, opts ReadOptions) []Message {
+	out := messages[:0]
+	for _, msg := range messages {
+		if !opts.Since.IsZero() || !opts.Until.IsZero() {
+			t, err := time.Parse(time.RFC3339, msg.Date)
+			if err == nil {
+				if !opts.Since.IsZero() && t.Before(opts.Since) {
+					continue
+				}
+				if !opts.Until.IsZero() && t.After(opts.Until) {
+					continue
+				}
+			}
+		}
+		if opts.AfterID > 0 && msg.ID <= opts.AfterID {
+			continue
+		}
+		if opts.BeforeID > 0 && msg.ID >= opts.BeforeID {
+			continue
+		}
+		out = append(out, msg)
+	}
+	if opts.Chronological {
+		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+			out[i], out[j] = out[j], out[i]
+		}
+	}
+	return out
+}
+
+func mutationResult(action, peerRef string, msgID int) MutationResult {
+	return MutationResult{
+		OK:        true,
+		Action:    action,
+		PeerRef:   peerRef,
+		MessageID: msgID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+func randomID() int64 {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return time.Now().UnixNano()
+	}
+	return int64(binary.LittleEndian.Uint64(b[:]))
+}
+
+func sentMessageID(updates tg.UpdatesClass) int {
+	switch v := updates.(type) {
+	case *tg.Updates:
+		for _, update := range v.Updates {
+			if msgID := messageIDFromUpdate(update); msgID != 0 {
+				return msgID
+			}
+		}
+	case *tg.UpdateShortSentMessage:
+		return v.ID
+	case *tg.UpdateShortMessage:
+		return v.ID
+	case *tg.UpdateShortChatMessage:
+		return v.ID
+	case *tg.UpdateShort:
+		return messageIDFromUpdate(v.Update)
+	case *tg.UpdatesCombined:
+		for _, update := range v.Updates {
+			if msgID := messageIDFromUpdate(update); msgID != 0 {
+				return msgID
+			}
+		}
+	}
+	return 0
+}
+
+func messageIDFromUpdate(update tg.UpdateClass) int {
+	switch v := update.(type) {
+	case *tg.UpdateNewMessage:
+		if msg, ok := v.Message.(*tg.Message); ok {
+			return msg.ID
+		}
+	case *tg.UpdateNewChannelMessage:
+		if msg, ok := v.Message.(*tg.Message); ok {
+			return msg.ID
+		}
+	case *tg.UpdateEditMessage:
+		if msg, ok := v.Message.(*tg.Message); ok {
+			return msg.ID
+		}
+	case *tg.UpdateEditChannelMessage:
+		if msg, ok := v.Message.(*tg.Message); ok {
+			return msg.ID
+		}
+	}
+	return 0
 }
 
 func unixDate(ts int) string {

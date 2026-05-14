@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -65,10 +67,7 @@ func Execute(ctx context.Context, args []string) error {
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		w := state.writer()
 		if state.json || state.jsonl {
-			_ = w.JSON(output.ErrorResponse{Error: output.ErrorBody{
-				Code:    "command_failed",
-				Message: err.Error(),
-			}})
+			_ = w.JSON(output.ErrorFrom(err))
 		} else {
 			_, _ = fmt.Fprintln(state.err, "error:", err)
 		}
@@ -91,7 +90,10 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&s.jsonl, "jsonl", false, "write JSONL output")
 	cmd.PersistentFlags().BoolVar(&s.quiet, "quiet", false, "suppress human info output")
 	cmd.PersistentFlags().BoolVar(&s.verbose, "verbose", false, "write verbose diagnostics")
-	cmd.AddCommand(authCommand(s), meCommand(s), chatsCommand(s), historyCommand(s), searchCommand(s), exportCommand(s), configCommand(s), profilesCommand(s), doctorCommand(s))
+	commands := []*cobra.Command{authCommand(s), meCommand(s), chatsCommand(s), readCommand(s), searchCommand(s), exportCommand(s), inboxCommand(s)}
+	commands = append(commands, mutationCommands(s)...)
+	cmd.AddCommand(commands...)
+	cmd.AddCommand(configCommand(s), profilesCommand(s), doctorCommand(s))
 	cmd.AddCommand(&cobra.Command{
 		Use:    "whoami",
 		Hidden: true,
@@ -130,7 +132,7 @@ func authCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeValue(s, status, func(w output.Writer) error {
+			return writeValueWithMeta(s, status, metaFromStatus(s, status), func(w output.Writer) error {
 				if status.Authorized {
 					return w.Print("authorized as " + accountLabel(status.Account))
 				}
@@ -146,6 +148,58 @@ func authCommand(s *appState) *cobra.Command {
 	login.Flags().StringVar(&passwordEnv, "password-env", "", "environment variable containing 2FA password")
 	login.Flags().BoolVar(&nonInteractive, "non-interactive", false, "fail instead of prompting for missing login values")
 	cmd.AddCommand(login)
+	start := &cobra.Command{
+		Use:   "start",
+		Short: "Start phone-code auth and store pending code hash",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			app, err := s.telegramApp()
+			if err != nil {
+				return err
+			}
+			phoneValue := firstNonEmpty(phone, envValue(phoneEnv))
+			if phoneValue == "" {
+				return fmt.Errorf("phone is required")
+			}
+			status, err := app.AuthStart(cmd.Context(), phoneValue)
+			if err != nil {
+				return err
+			}
+			return writeValueWithMeta(s, status, metaFromStatus(s, tgapp.AuthStatus{Profile: s.profileName()}), func(w output.Writer) error {
+				if status.AlreadyAuthorized {
+					return w.Print("already authorized")
+				}
+				return w.Print("code sent")
+			})
+		},
+	}
+	start.Flags().StringVar(&phone, "phone", "", "phone number for login")
+	start.Flags().StringVar(&phoneEnv, "phone-env", "", "environment variable containing phone number")
+	cmd.AddCommand(start)
+	complete := &cobra.Command{
+		Use:   "complete",
+		Short: "Complete pending phone-code auth",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			app, err := s.telegramApp()
+			if err != nil {
+				return err
+			}
+			status, err := app.AuthComplete(cmd.Context(), firstNonEmpty(code, envValue(codeEnv)), firstNonEmpty(password, envValue(passwordEnv)))
+			if err != nil {
+				return err
+			}
+			return writeValueWithMeta(s, status, metaFromStatus(s, status), func(w output.Writer) error {
+				if status.Authorized {
+					return w.Print("authorized as " + accountLabel(status.Account))
+				}
+				return w.Print("not authorized")
+			})
+		},
+	}
+	complete.Flags().StringVar(&code, "code", "", "login code")
+	complete.Flags().StringVar(&codeEnv, "code-env", "", "environment variable containing login code")
+	complete.Flags().StringVar(&password, "password", "", "2FA password")
+	complete.Flags().StringVar(&passwordEnv, "password-env", "", "environment variable containing 2FA password")
+	cmd.AddCommand(complete)
 	cmd.AddCommand(&cobra.Command{
 		Use:   "status",
 		Short: "Show auth status",
@@ -158,7 +212,7 @@ func authCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeValue(s, status, func(w output.Writer) error {
+			return writeValueWithMeta(s, status, metaFromStatus(s, status), func(w output.Writer) error {
 				if status.Authorized {
 					return w.Print("authorized as " + accountLabel(status.Account))
 				}
@@ -201,7 +255,7 @@ func meCommand(s *appState) *cobra.Command {
 			if !status.Authorized {
 				return fmt.Errorf("not authorized; run tele auth login")
 			}
-			return writeValue(s, status.Account, func(w output.Writer) error {
+			return writeValueWithMeta(s, status.Account, metaFromStatus(s, status), func(w output.Writer) error {
 				return w.Print(accountLabel(status.Account))
 			})
 		},
@@ -224,7 +278,7 @@ func chatsCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeValue(s, chats, func(w output.Writer) error {
+			return writeValueWithMeta(s, chats, s.telegramMeta(cmd.Context(), app, limit, "", nil), func(w output.Writer) error {
 				for _, chat := range chats {
 					if _, err := fmt.Fprintf(w.Out, "%-22s %-10s %4d %s\n", chat.Ref, chat.Kind, chat.UnreadCount, displayChat(chat)); err != nil {
 						return err
@@ -238,28 +292,62 @@ func chatsCommand(s *appState) *cobra.Command {
 	return cmd
 }
 
-func historyCommand(s *appState) *cobra.Command {
+func readCommand(s *appState) *cobra.Command {
 	var limit int
+	var since string
+	var until string
+	var afterID int
+	var beforeID int
+	var aroundID int
+	var chronological bool
 	cmd := &cobra.Command{
-		Use:   "history <peer>",
-		Short: "Fetch recent messages from a peer",
-		Args:  cobra.ExactArgs(1),
+		Use:     "read <peer>",
+		Aliases: []string{"history"},
+		Short:   "Read bounded message history from a peer",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app, err := s.telegramApp()
 			if err != nil {
 				return err
 			}
 			limit = s.defaultLimit(limit)
+			opts := tgapp.ReadOptions{
+				Peer:          args[0],
+				Limit:         limit,
+				AfterID:       afterID,
+				BeforeID:      beforeID,
+				AroundID:      aroundID,
+				Chronological: chronological,
+			}
+			if since != "" {
+				opts.Since, err = parseTimeFilter(since, time.Now())
+				if err != nil {
+					return err
+				}
+			}
+			if until != "" {
+				opts.Until, err = parseTimeFilter(until, time.Now())
+				if err != nil {
+					return err
+				}
+			}
 			w := s.writer()
-			w.Warn("history reads may mark Telegram messages read")
-			messages, err := app.History(cmd.Context(), args[0], limit)
+			w.Warn("read may mark Telegram messages read")
+			messages, err := app.Read(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}
-			return writeMessages(s, messages)
+			meta := s.telegramMeta(cmd.Context(), app, limit, args[0], []string{"may_mark_read"})
+			return writeMessages(s, messages, meta)
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum messages to return")
+	cmd.Flags().StringVar(&since, "since", "", "only include messages since duration/date/RFC3339")
+	cmd.Flags().StringVar(&until, "until", "", "only include messages until duration/date/RFC3339")
+	cmd.Flags().IntVar(&afterID, "after-id", 0, "only include messages after this id")
+	cmd.Flags().IntVar(&beforeID, "before-id", 0, "only include messages before this id")
+	cmd.Flags().IntVar(&aroundID, "around", 0, "fetch context around this message id")
+	cmd.Flags().BoolVar(&chronological, "chronological", false, "print oldest messages first")
 	return cmd
 }
 
@@ -282,7 +370,7 @@ func searchCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeMessages(s, messages)
+			return writeMessages(s, messages, s.telegramMeta(cmd.Context(), app, limit, chat, []string{"may_mark_read"}))
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum messages to return")
@@ -310,12 +398,12 @@ func exportCommand(s *appState) *cobra.Command {
 				s.jsonl = true
 			}
 			s.writer().Warn("export reads may mark Telegram messages read")
-			messages, err := app.History(cmd.Context(), args[0], limit)
+			messages, err := app.Read(cmd.Context(), tgapp.ReadOptions{Peer: args[0], Limit: limit})
 			if err != nil {
 				return err
 			}
 			if format == "jsonl" {
-				return writeMessages(s, messages)
+				return writeMessages(s, messages, s.telegramMeta(cmd.Context(), app, limit, args[0], []string{"may_mark_read"}))
 			}
 			for _, msg := range messages {
 				if _, err := fmt.Fprintf(s.out, "- %s #%d %s\n", msg.Date, msg.ID, strings.TrimSpace(msg.Text)); err != nil {
@@ -327,6 +415,223 @@ func exportCommand(s *appState) *cobra.Command {
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum messages to export")
 	cmd.Flags().StringVar(&format, "format", "jsonl", "export format: jsonl or markdown")
+	return cmd
+}
+
+func inboxCommand(s *appState) *cobra.Command {
+	return inboxLikeCommand(s, "inbox", "", "List recent dialogs for triage")
+}
+
+func inboxLikeCommand(s *appState, name, mode, short string) *cobra.Command {
+	var limit int
+	cmd := &cobra.Command{
+		Use:   name,
+		Short: short,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			app, err := s.telegramApp()
+			if err != nil {
+				return err
+			}
+			limit = s.defaultLimit(limit)
+			chats, err := app.Inbox(cmd.Context(), limit, mode)
+			if err != nil {
+				return err
+			}
+			return writeValueWithMeta(s, chats, s.telegramMeta(cmd.Context(), app, limit, "", nil), func(w output.Writer) error {
+				for _, chat := range chats {
+					if _, err := fmt.Fprintf(w.Out, "%-22s unread=%-3d mentions=%-3d #%d %s %s\n", chat.Ref, chat.UnreadCount, chat.UnreadMentionsCount, chat.TopMessageID, displayChat(chat), strings.TrimSpace(chat.LastMessagePreview)); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 0, "maximum dialogs to return")
+	if name == "inbox" {
+		cmd.AddCommand(inboxLikeCommand(s, "unread", "unread", "List dialogs with unread messages"))
+		cmd.AddCommand(inboxLikeCommand(s, "mentions", "mentions", "List dialogs with unread mentions"))
+	}
+	return cmd
+}
+
+func mutationCommands(s *appState) []*cobra.Command {
+	return []*cobra.Command{
+		sendCommand(s),
+		replyCommand(s),
+		reactCommand(s),
+		editCommand(s),
+		deleteCommand(s),
+		inboxLikeCommand(s, "unread", "unread", "List dialogs with unread messages"),
+		inboxLikeCommand(s, "mentions", "mentions", "List dialogs with unread mentions"),
+	}
+}
+
+func sendCommand(s *appState) *cobra.Command {
+	var text string
+	var textStdin bool
+	cmd := &cobra.Command{
+		Use:   "send <peer>",
+		Short: "Send a text message",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body, err := textInput(s, text, textStdin)
+			if err != nil {
+				return err
+			}
+			app, err := s.telegramApp()
+			if err != nil {
+				return err
+			}
+			result, err := app.Send(cmd.Context(), args[0], body, 0)
+			if err != nil {
+				return err
+			}
+			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
+				return w.Print(fmt.Sprintf("sent %s #%d", result.PeerRef, result.MessageID))
+			})
+		},
+	}
+	cmd.Flags().StringVar(&text, "text", "", "message text")
+	cmd.Flags().BoolVar(&textStdin, "text-stdin", false, "read message text from stdin")
+	return cmd
+}
+
+func replyCommand(s *appState) *cobra.Command {
+	var text string
+	var textStdin bool
+	cmd := &cobra.Command{
+		Use:   "reply <peer> <msg-id>",
+		Short: "Reply to a message",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			msgID, err := parsePositiveInt(args[1], "msg-id")
+			if err != nil {
+				return err
+			}
+			body, err := textInput(s, text, textStdin)
+			if err != nil {
+				return err
+			}
+			app, err := s.telegramApp()
+			if err != nil {
+				return err
+			}
+			result, err := app.Send(cmd.Context(), args[0], body, msgID)
+			if err != nil {
+				return err
+			}
+			result.Action = "reply"
+			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
+				return w.Print(fmt.Sprintf("replied %s #%d", result.PeerRef, result.MessageID))
+			})
+		},
+	}
+	cmd.Flags().StringVar(&text, "text", "", "message text")
+	cmd.Flags().BoolVar(&textStdin, "text-stdin", false, "read message text from stdin")
+	return cmd
+}
+
+func reactCommand(s *appState) *cobra.Command {
+	var emoji string
+	cmd := &cobra.Command{
+		Use:   "react <peer> <msg-id>",
+		Short: "React to a message",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			msgID, err := parsePositiveInt(args[1], "msg-id")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(emoji) == "" {
+				return fmt.Errorf("--emoji is required")
+			}
+			app, err := s.telegramApp()
+			if err != nil {
+				return err
+			}
+			result, err := app.React(cmd.Context(), args[0], msgID, emoji)
+			if err != nil {
+				return err
+			}
+			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
+				return w.Print(fmt.Sprintf("reacted %s #%d", result.PeerRef, result.MessageID))
+			})
+		},
+	}
+	cmd.Flags().StringVar(&emoji, "emoji", "", "reaction emoji")
+	return cmd
+}
+
+func editCommand(s *appState) *cobra.Command {
+	var text string
+	var textStdin bool
+	cmd := &cobra.Command{
+		Use:   "edit <peer> <msg-id>",
+		Short: "Edit one of your messages",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			msgID, err := parsePositiveInt(args[1], "msg-id")
+			if err != nil {
+				return err
+			}
+			body, err := textInput(s, text, textStdin)
+			if err != nil {
+				return err
+			}
+			app, err := s.telegramApp()
+			if err != nil {
+				return err
+			}
+			result, err := app.Edit(cmd.Context(), args[0], msgID, body)
+			if err != nil {
+				return err
+			}
+			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
+				return w.Print(fmt.Sprintf("edited %s #%d", result.PeerRef, result.MessageID))
+			})
+		},
+	}
+	cmd.Flags().StringVar(&text, "text", "", "new message text")
+	cmd.Flags().BoolVar(&textStdin, "text-stdin", false, "read new message text from stdin")
+	return cmd
+}
+
+func deleteCommand(s *appState) *cobra.Command {
+	var forMe bool
+	var revoke bool
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "delete <peer> <msg-id>",
+		Short: "Delete a message",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !yes {
+				return fmt.Errorf("delete requires --yes")
+			}
+			if forMe == revoke {
+				return fmt.Errorf("choose exactly one of --for-me or --revoke")
+			}
+			msgID, err := parsePositiveInt(args[1], "msg-id")
+			if err != nil {
+				return err
+			}
+			app, err := s.telegramApp()
+			if err != nil {
+				return err
+			}
+			result, err := app.DeleteMessage(cmd.Context(), args[0], msgID, revoke)
+			if err != nil {
+				return err
+			}
+			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
+				return w.Print(fmt.Sprintf("deleted %s #%d", result.PeerRef, result.MessageID))
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&forMe, "for-me", false, "delete only for the current account where Telegram supports it")
+	cmd.Flags().BoolVar(&revoke, "revoke", false, "delete for everyone where Telegram supports it")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm deletion")
 	return cmd
 }
 
@@ -621,25 +926,29 @@ func (s *appState) defaultLimit(value int) int {
 }
 
 func writeValue(s *appState, value any, human func(output.Writer) error) error {
+	return writeValueWithMeta(s, value, s.meta(0, "", nil), human)
+}
+
+func writeValueWithMeta(s *appState, value any, meta output.Meta, human func(output.Writer) error) error {
 	w := s.writer()
-	if w.Format == output.JSON || w.Format == output.JSONL {
+	if w.Format == output.JSON {
+		return w.JSON(output.Envelope{Meta: meta, Data: value})
+	}
+	if w.Format == output.JSONL {
 		return w.JSON(value)
 	}
 	return human(w)
 }
 
-func writeMessages(s *appState, messages []tgapp.Message) error {
+func writeMessages(s *appState, messages []tgapp.Message, meta output.Meta) error {
 	w := s.writer()
 	if w.Format == output.JSON {
-		return w.JSON(map[string]any{
-			"side_effects": []string{"may_mark_read"},
-			"messages":     messages,
-		})
+		return w.JSON(output.Envelope{Meta: meta, Data: messages})
 	}
 	if w.Format == output.JSONL {
 		items := make([]any, 0, len(messages))
 		for _, msg := range messages {
-			items = append(items, msg)
+			items = append(items, output.Envelope{Meta: meta, Data: msg})
 		}
 		return w.JSONL(items)
 	}
@@ -653,6 +962,93 @@ func writeMessages(s *appState, messages []tgapp.Message) error {
 		}
 	}
 	return nil
+}
+
+func (s *appState) meta(limit int, peerRef string, sideEffects []string) output.Meta {
+	meta := output.NewMeta(s.profileName())
+	meta.Limit = limit
+	meta.PeerRef = peerRef
+	meta.SideEffects = sideEffects
+	return meta
+}
+
+func (s *appState) telegramMeta(ctx context.Context, app tgapp.App, limit int, peerRef string, sideEffects []string) output.Meta {
+	meta := s.meta(limit, peerRef, sideEffects)
+	if !s.json && !s.jsonl {
+		return meta
+	}
+	status, err := app.Status(ctx)
+	if err == nil && status.Account != nil {
+		meta.AccountID = status.Account.ID
+	}
+	return meta
+}
+
+func metaFromStatus(s *appState, status tgapp.AuthStatus) output.Meta {
+	meta := output.NewMeta(firstNonEmpty(status.Profile, s.profileName()))
+	if status.Account != nil {
+		meta.AccountID = status.Account.ID
+	}
+	return meta
+}
+
+func (s *appState) profileName() string {
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return s.profile
+	}
+	name, _, err := cfg.ResolveProfile(s.profile)
+	if err != nil {
+		return s.profile
+	}
+	return name
+}
+
+func parseTimeFilter(value string, now time.Time) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	if strings.HasSuffix(value, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
+		if err != nil || days <= 0 {
+			return time.Time{}, fmt.Errorf("invalid day duration %q", value)
+		}
+		return now.Add(-time.Duration(days) * 24 * time.Hour), nil
+	}
+	if d, err := time.ParseDuration(value); err == nil {
+		return now.Add(-d), nil
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse("2006-01-02", value); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("invalid time filter %q", value)
+}
+
+func textInput(s *appState, text string, textStdin bool) (string, error) {
+	if textStdin {
+		b, err := io.ReadAll(s.in)
+		if err != nil {
+			return "", err
+		}
+		text = string(b)
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", fmt.Errorf("message text is required; pass --text or --text-stdin")
+	}
+	return text, nil
+}
+
+func parsePositiveInt(value, name string) (int, error) {
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return n, nil
 }
 
 func accountLabel(a *tgapp.Account) string {

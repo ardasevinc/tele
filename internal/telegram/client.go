@@ -4,11 +4,11 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -775,11 +775,11 @@ func mutationResult(action, peerRef string, msgID int) MutationResult {
 }
 
 func randomID() int64 {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	n, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 63))
+	if err != nil {
 		return time.Now().UnixNano()
 	}
-	return int64(binary.LittleEndian.Uint64(b[:]))
+	return n.Int64()
 }
 
 func sentMessageID(updates tg.UpdatesClass) int {

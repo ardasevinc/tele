@@ -138,7 +138,7 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 		Device: telegram.DeviceConfig{
 			DeviceModel:    "tele",
 			SystemVersion:  "macOS",
-			AppVersion:     "0.1.0-alpha",
+			AppVersion:     "0.1.0-alpha.2",
 			SystemLangCode: "en",
 			LangCode:       "en",
 		},

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,11 @@ import (
 )
 
 const apiHashKey = "api-hash"
+
+var (
+	loginCodeLineRE = regexp.MustCompile(`(?i)(login code:\s*)[A-Za-z0-9_-]+`)
+	webLoginCodeRE  = regexp.MustCompile(`(?i)(this is your login code:\s*)\n[A-Za-z0-9_-]+`)
+)
 
 type App struct {
 	Config  config.Config
@@ -387,7 +393,7 @@ func messagesFromResult(sourcePeer string, res tg.MessagesMessagesClass) []Messa
 			item := Message{
 				ID:            msg.ID,
 				Date:          unixDate(msg.Date),
-				Text:          msg.Message,
+				Text:          redactSensitiveText(msg.Message),
 				Outgoing:      msg.Out,
 				Post:          msg.Post,
 				SideEffects:   []string{"may_mark_read"},
@@ -417,6 +423,12 @@ func unixDate(ts int) string {
 		return ""
 	}
 	return time.Unix(int64(ts), 0).UTC().Format(time.RFC3339)
+}
+
+func redactSensitiveText(text string) string {
+	text = loginCodeLineRE.ReplaceAllString(text, "${1}[redacted]")
+	text = webLoginCodeRE.ReplaceAllString(text, "${1}\n[redacted]")
+	return text
 }
 
 type interactiveAuth struct {

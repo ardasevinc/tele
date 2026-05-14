@@ -306,13 +306,15 @@ func exportCommand(s *appState) *cobra.Command {
 				return err
 			}
 			limit = s.defaultLimit(limit)
+			if format == "jsonl" {
+				s.jsonl = true
+			}
 			s.writer().Warn("export reads may mark Telegram messages read")
 			messages, err := app.History(cmd.Context(), args[0], limit)
 			if err != nil {
 				return err
 			}
 			if format == "jsonl" {
-				s.jsonl = true
 				return writeMessages(s, messages)
 			}
 			for _, msg := range messages {

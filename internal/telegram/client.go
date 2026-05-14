@@ -49,6 +49,13 @@ type AuthStatus struct {
 	Account    *Account `json:"account,omitempty"`
 }
 
+type LoginOptions struct {
+	Phone          string
+	Code           string
+	Password       string
+	NonInteractive bool
+}
+
 func (a App) SetAPIHash(ctx context.Context, hash string) error {
 	return a.Secrets.Set(ctx, a.Profile, apiHashKey, []byte(strings.TrimSpace(hash)))
 }
@@ -77,7 +84,6 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 	}
 	client := telegram.NewClient(int(profile.APIID), string(hash), telegram.Options{
 		SessionStorage: telesession.KeychainStorage{Profile: a.Profile, Store: a.Secrets},
-		NoUpdates:      true,
 		Device: telegram.DeviceConfig{
 			DeviceModel:    "tele",
 			SystemVersion:  "macOS",
@@ -88,34 +94,46 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 	})
 	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	return client.Run(runCtx, func(ctx context.Context) error {
+	called := false
+	if err := client.Run(runCtx, func(ctx context.Context) error {
+		called = true
 		return fn(ctx, client)
-	})
+	}); err != nil {
+		return err
+	}
+	if !called {
+		return fmt.Errorf("telegram client closed before ready")
+	}
+	return nil
 }
 
-func (a App) Login(ctx context.Context) (AuthStatus, error) {
-	var status AuthStatus
+func (a App) Login(ctx context.Context, opts LoginOptions) (AuthStatus, error) {
+	status := AuthStatus{Profile: a.Profile}
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
 		flow := auth.NewFlow(interactiveAuth{
-			in:  a.In,
-			out: a.Out,
-			err: a.Err,
+			in:             a.In,
+			err:            a.Err,
+			phone:          opts.Phone,
+			code:           opts.Code,
+			password:       opts.Password,
+			nonInteractive: opts.NonInteractive,
 		}, auth.SendCodeOptions{})
-		if err := c.Auth().IfNecessary(ctx, flow); err != nil {
+		if err := flow.Run(ctx, c.Auth()); err != nil {
 			return err
 		}
-		s, err := c.Auth().Status(ctx)
-		if err != nil {
-			return err
-		}
-		status = statusFromGotd(a.Profile, s)
+		status.Authorized = true
 		return nil
 	})
 	return status, err
 }
 
 func (a App) Status(ctx context.Context) (AuthStatus, error) {
-	var status AuthStatus
+	status := AuthStatus{Profile: a.Profile}
+	if _, err := a.Secrets.Get(ctx, a.Profile, telesession.Key); errors.Is(err, secrets.ErrNotFound) {
+		return status, nil
+	} else if err != nil {
+		return status, err
+	}
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
 		s, err := c.Auth().Status(ctx)
 		if err != nil {
@@ -387,20 +405,32 @@ func unixDate(ts int) string {
 }
 
 type interactiveAuth struct {
-	in  io.Reader
-	out io.Writer
-	err io.Writer
+	in             io.Reader
+	err            io.Writer
+	phone          string
+	code           string
+	password       string
+	nonInteractive bool
 }
 
 func (a interactiveAuth) Phone(ctx context.Context) (string, error) {
+	if a.phone != "" {
+		return a.phone, nil
+	}
 	return a.prompt(ctx, "phone: ", false)
 }
 
 func (a interactiveAuth) Password(ctx context.Context) (string, error) {
+	if a.password != "" {
+		return a.password, nil
+	}
 	return a.prompt(ctx, "2fa password: ", true)
 }
 
 func (a interactiveAuth) Code(ctx context.Context, _ *tg.AuthSentCode) (string, error) {
+	if a.code != "" {
+		return a.code, nil
+	}
 	return a.prompt(ctx, "login code: ", false)
 }
 
@@ -418,6 +448,9 @@ func (a interactiveAuth) prompt(ctx context.Context, label string, hidden bool) 
 	case <-ctx.Done():
 		return "", ctx.Err()
 	default:
+	}
+	if a.nonInteractive {
+		return "", fmt.Errorf("missing %s for non-interactive login", strings.TrimSuffix(label, ": "))
 	}
 	_, _ = fmt.Fprint(a.err, label)
 	if hidden {

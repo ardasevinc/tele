@@ -105,7 +105,14 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 
 func authCommand(s *appState) *cobra.Command {
 	cmd := &cobra.Command{Use: "auth", Short: "Manage Telegram account auth"}
-	cmd.AddCommand(&cobra.Command{
+	var phone string
+	var phoneEnv string
+	var code string
+	var codeEnv string
+	var password string
+	var passwordEnv string
+	var nonInteractive bool
+	login := &cobra.Command{
 		Use:   "login",
 		Short: "Log in with Telegram phone-code auth",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -113,7 +120,13 @@ func authCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			status, err := app.Login(cmd.Context())
+			opts := tgapp.LoginOptions{
+				Phone:          firstNonEmpty(phone, envValue(phoneEnv)),
+				Code:           firstNonEmpty(code, envValue(codeEnv)),
+				Password:       firstNonEmpty(password, envValue(passwordEnv)),
+				NonInteractive: nonInteractive,
+			}
+			status, err := app.Login(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}
@@ -124,7 +137,15 @@ func authCommand(s *appState) *cobra.Command {
 				return w.Print("not authorized")
 			})
 		},
-	})
+	}
+	login.Flags().StringVar(&phone, "phone", "", "phone number for login")
+	login.Flags().StringVar(&phoneEnv, "phone-env", "", "environment variable containing phone number")
+	login.Flags().StringVar(&code, "code", "", "login code")
+	login.Flags().StringVar(&codeEnv, "code-env", "", "environment variable containing login code")
+	login.Flags().StringVar(&password, "password", "", "2FA password")
+	login.Flags().StringVar(&passwordEnv, "password-env", "", "environment variable containing 2FA password")
+	login.Flags().BoolVar(&nonInteractive, "non-interactive", false, "fail instead of prompting for missing login values")
+	cmd.AddCommand(login)
 	cmd.AddCommand(&cobra.Command{
 		Use:   "status",
 		Short: "Show auth status",
@@ -663,6 +684,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func envValue(name string) string {
+	if name == "" {
+		return ""
+	}
+	return os.Getenv(name)
 }
 
 func mustPaths() config.Paths {

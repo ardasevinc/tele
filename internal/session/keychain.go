@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/ardasevinc/tele/internal/secrets"
+	gotdsession "github.com/gotd/td/session"
 )
 
 const Key = "mtproto-session"
@@ -17,7 +18,7 @@ type KeychainStorage struct {
 func (s KeychainStorage) LoadSession(ctx context.Context) ([]byte, error) {
 	data, err := s.Store.Get(ctx, s.Profile, Key)
 	if errors.Is(err, secrets.ErrNotFound) {
-		return nil, nil
+		return nil, gotdsession.ErrNotFound
 	}
 	return data, err
 }

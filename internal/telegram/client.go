@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -61,10 +62,11 @@ func (a App) SetAPIHash(ctx context.Context, hash string) error {
 }
 
 func (a App) DeleteAuth(ctx context.Context) error {
-	if err := a.Secrets.Delete(ctx, a.Profile, telesession.Key); err != nil {
-		return err
-	}
-	return nil
+	return telesession.KeychainStorage{
+		Profile: a.Profile,
+		Store:   a.Secrets,
+		Path:    a.sessionPath(),
+	}.Delete(ctx)
 }
 
 func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.Client) error) error {
@@ -83,7 +85,11 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 		return fmt.Errorf("missing api_id for profile %q; run tele config set api-id <id>", a.Profile)
 	}
 	client := telegram.NewClient(int(profile.APIID), string(hash), telegram.Options{
-		SessionStorage: telesession.KeychainStorage{Profile: a.Profile, Store: a.Secrets},
+		SessionStorage: telesession.KeychainStorage{
+			Profile: a.Profile,
+			Store:   a.Secrets,
+			Path:    a.sessionPath(),
+		},
 		Device: telegram.DeviceConfig{
 			DeviceModel:    "tele",
 			SystemVersion:  "macOS",
@@ -95,11 +101,16 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	called := false
+	var callbackErr error
 	if err := client.Run(runCtx, func(ctx context.Context) error {
 		called = true
-		return fn(ctx, client)
+		callbackErr = fn(ctx, client)
+		return callbackErr
 	}); err != nil {
 		return err
+	}
+	if callbackErr != nil {
+		return callbackErr
 	}
 	if !called {
 		return fmt.Errorf("telegram client closed before ready")
@@ -129,7 +140,7 @@ func (a App) Login(ctx context.Context, opts LoginOptions) (AuthStatus, error) {
 
 func (a App) Status(ctx context.Context) (AuthStatus, error) {
 	status := AuthStatus{Profile: a.Profile}
-	if _, err := a.Secrets.Get(ctx, a.Profile, telesession.Key); errors.Is(err, secrets.ErrNotFound) {
+	if _, err := os.Stat(a.sessionPath()); errors.Is(err, os.ErrNotExist) {
 		return status, nil
 	} else if err != nil {
 		return status, err
@@ -256,6 +267,10 @@ func (a App) resolvePeer(ctx context.Context, c *telegram.Client, token string) 
 func (a App) profile() (config.Profile, error) {
 	_, profile, err := a.Config.ResolveProfile(a.Profile)
 	return profile, err
+}
+
+func (a App) sessionPath() string {
+	return filepath.Join(a.Paths.Data, a.Profile, "session.enc")
 }
 
 func statusFromGotd(profile string, s *auth.Status) AuthStatus {

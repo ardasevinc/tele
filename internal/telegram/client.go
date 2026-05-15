@@ -301,6 +301,13 @@ type Chat struct {
 	LastMessagePreview  string `json:"last_message_preview,omitempty"`
 }
 
+type PeerInfo struct {
+	Ref      string `json:"ref"`
+	Kind     string `json:"kind,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Username string `json:"username,omitempty"`
+}
+
 func (a App) Chats(ctx context.Context, limit int) ([]Chat, error) {
 	var out []Chat
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
@@ -338,6 +345,19 @@ func (a App) Inbox(ctx context.Context, limit int, mode string) ([]Chat, error) 
 		out = append(out, chat)
 	}
 	return out, nil
+}
+
+func (a App) PeerInfo(token string) PeerInfo {
+	_, p, err := peerstore.New(a.Paths.Data, a.Profile).Resolve(token)
+	if err != nil {
+		return PeerInfo{Ref: token}
+	}
+	return PeerInfo{
+		Ref:      p.Ref,
+		Kind:     p.Kind,
+		Title:    p.Title,
+		Username: p.Username,
+	}
 }
 
 type Message struct {

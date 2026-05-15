@@ -294,6 +294,7 @@ func chatsCommand(s *appState) *cobra.Command {
 
 func readCommand(s *appState) *cobra.Command {
 	var limit int
+	var format string
 	var since string
 	var until string
 	var afterID int
@@ -306,6 +307,9 @@ func readCommand(s *appState) *cobra.Command {
 		Short:   "Read bounded message history from a peer",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "human" && format != "transcript" {
+				return fmt.Errorf("--format must be human or transcript")
+			}
 			app, err := s.telegramApp()
 			if err != nil {
 				return err
@@ -331,6 +335,9 @@ func readCommand(s *appState) *cobra.Command {
 					return err
 				}
 			}
+			if format == "transcript" && !s.json && !s.jsonl {
+				opts.Chronological = true
+			}
 			w := s.writer()
 			w.Warn("read may mark Telegram messages read")
 			messages, err := app.Read(cmd.Context(), opts)
@@ -338,10 +345,14 @@ func readCommand(s *appState) *cobra.Command {
 				return err
 			}
 			meta := s.telegramMeta(cmd.Context(), app, limit, args[0], []string{"may_mark_read"})
+			if format == "transcript" && !s.json && !s.jsonl {
+				return writeTranscript(s, messages, meta, app.PeerInfo(args[0]))
+			}
 			return writeMessages(s, messages, meta)
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum messages to return")
+	cmd.Flags().StringVar(&format, "format", "human", "output format: human or transcript")
 	cmd.Flags().StringVar(&since, "since", "", "only include messages since duration/date/RFC3339")
 	cmd.Flags().StringVar(&until, "until", "", "only include messages until duration/date/RFC3339")
 	cmd.Flags().IntVar(&afterID, "after-id", 0, "only include messages after this id")
@@ -386,8 +397,8 @@ func exportCommand(s *appState) *cobra.Command {
 		Short: "Bounded export of recent messages",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if format != "jsonl" && format != "markdown" {
-				return fmt.Errorf("--format must be jsonl or markdown")
+			if format != "jsonl" && format != "markdown" && format != "transcript" {
+				return fmt.Errorf("--format must be jsonl, markdown, or transcript")
 			}
 			app, err := s.telegramApp()
 			if err != nil {
@@ -398,12 +409,15 @@ func exportCommand(s *appState) *cobra.Command {
 				s.jsonl = true
 			}
 			s.writer().Warn("export reads may mark Telegram messages read")
-			messages, err := app.Read(cmd.Context(), tgapp.ReadOptions{Peer: args[0], Limit: limit})
+			messages, err := app.Read(cmd.Context(), tgapp.ReadOptions{Peer: args[0], Limit: limit, Chronological: format == "transcript"})
 			if err != nil {
 				return err
 			}
 			if format == "jsonl" {
 				return writeMessages(s, messages, s.telegramMeta(cmd.Context(), app, limit, args[0], []string{"may_mark_read"}))
+			}
+			if format == "transcript" {
+				return writeTranscript(s, messages, s.telegramMeta(cmd.Context(), app, limit, args[0], []string{"may_mark_read"}), app.PeerInfo(args[0]))
 			}
 			for _, msg := range messages {
 				if _, err := fmt.Fprintf(s.out, "- %s #%d %s\n", msg.Date, msg.ID, strings.TrimSpace(msg.Text)); err != nil {
@@ -414,7 +428,7 @@ func exportCommand(s *appState) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum messages to export")
-	cmd.Flags().StringVar(&format, "format", "jsonl", "export format: jsonl or markdown")
+	cmd.Flags().StringVar(&format, "format", "jsonl", "export format: jsonl, markdown, or transcript")
 	return cmd
 }
 
@@ -964,12 +978,155 @@ func writeMessages(s *appState, messages []tgapp.Message, meta output.Meta) erro
 	return nil
 }
 
+func writeTranscript(s *appState, messages []tgapp.Message, meta output.Meta, peer tgapp.PeerInfo) error {
+	w := s.writer()
+	if w.Format != output.Human {
+		return writeMessages(s, messages, meta)
+	}
+	headerPeer := peer.Ref
+	if headerPeer == "" {
+		headerPeer = meta.PeerRef
+	}
+	label := peerLabel(peer)
+	if label != "" {
+		headerPeer += " (" + label + ")"
+	}
+	if _, err := fmt.Fprintf(w.Out, "peer: %s\n", headerPeer); err != nil {
+		return err
+	}
+	if meta.FetchedAt != "" {
+		if _, err := fmt.Fprintf(w.Out, "fetched_at: %s\n", meta.FetchedAt); err != nil {
+			return err
+		}
+	}
+	if meta.Limit > 0 {
+		if _, err := fmt.Fprintf(w.Out, "limit: %d\n", meta.Limit); err != nil {
+			return err
+		}
+	}
+	if len(meta.SideEffects) > 0 {
+		if _, err := fmt.Fprintf(w.Out, "side_effects: %s\n", strings.Join(meta.SideEffects, ", ")); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w.Out, "messages: %d\n\n", len(messages)); err != nil {
+		return err
+	}
+	lastDay := ""
+	for _, msg := range messages {
+		day, clock := transcriptDateParts(msg.Date)
+		if day != "" && day != lastDay {
+			if lastDay != "" {
+				if _, err := fmt.Fprintln(w.Out); err != nil {
+					return err
+				}
+			}
+			if _, err := fmt.Fprintf(w.Out, "-- %s --\n", day); err != nil {
+				return err
+			}
+			lastDay = day
+		}
+		if clock == "" {
+			clock = "??:??"
+		}
+		speaker := "them"
+		if msg.Outgoing {
+			speaker = "me"
+		}
+		line := transcriptBody(msg)
+		if _, err := fmt.Fprintf(w.Out, "[%d] %s %s: %s\n", msg.ID, clock, speaker, firstTranscriptLine(line)); err != nil {
+			return err
+		}
+		for _, continuation := range transcriptContinuations(line) {
+			if _, err := fmt.Fprintf(w.Out, "    %s\n", continuation); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (s *appState) meta(limit int, peerRef string, sideEffects []string) output.Meta {
 	meta := output.NewMeta(s.profileName())
 	meta.Limit = limit
 	meta.PeerRef = peerRef
 	meta.SideEffects = sideEffects
 	return meta
+}
+
+func peerLabel(peer tgapp.PeerInfo) string {
+	title := strings.TrimSpace(peer.Title)
+	username := strings.TrimSpace(peer.Username)
+	if username != "" {
+		username = "@" + strings.TrimPrefix(username, "@")
+	}
+	switch {
+	case title != "" && username != "":
+		return title + " " + username
+	case title != "":
+		return title
+	default:
+		return username
+	}
+}
+
+func transcriptDateParts(value string) (string, string) {
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return "", ""
+	}
+	t = t.UTC()
+	return t.Format("2006-01-02"), t.Format("15:04")
+}
+
+func transcriptBody(msg tgapp.Message) string {
+	text := strings.TrimSpace(msg.Text)
+	if text != "" {
+		return text
+	}
+	if msg.Media != "" {
+		return "[" + mediaLabel(msg.Media) + "]"
+	}
+	if msg.Service != "" {
+		return "[service: " + msg.Service + "]"
+	}
+	return "[empty]"
+}
+
+func mediaLabel(media string) string {
+	label := strings.TrimPrefix(media, "messageMedia")
+	if label == "" {
+		return media
+	}
+	return strings.ToLower(label[:1]) + label[1:]
+}
+
+func firstTranscriptLine(value string) string {
+	lines := transcriptLines(value)
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[0]
+}
+
+func transcriptContinuations(value string) []string {
+	lines := transcriptLines(value)
+	if len(lines) <= 1 {
+		return nil
+	}
+	return lines[1:]
+}
+
+func transcriptLines(value string) []string {
+	raw := strings.Split(strings.TrimSpace(value), "\n")
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		lines = append(lines, strings.TrimRight(line, " \t"))
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
 }
 
 func (s *appState) telegramMeta(ctx context.Context, app tgapp.App, limit int, peerRef string, sideEffects []string) output.Meta {

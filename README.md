@@ -36,7 +36,7 @@ For one-shot interactive login, `tele auth login` still works.
 ## Agent surface
 
 ```sh
-tele read <peer> --since 2h --limit 50 --json
+tele read <peer> --since 2h --limit 50 --format transcript --quiet
 tele read <peer> --around 123 --chronological --json
 tele inbox --json
 tele unread --json
@@ -47,6 +47,10 @@ tele react <peer> 123 --emoji "👍" --json
 printf 'edited' | tele edit <peer> 123 --text-stdin --json
 tele delete <peer> 123 --for-me --yes --json
 ```
+
+Use transcript output when giving messages directly to an agent. It preserves
+message IDs and side-effect metadata without the token cost of full JSON.
+Use `--json` when another tool needs structured fields.
 
 `tele read`, `tele search`, and `tele export` may mark messages read depending on
 Telegram/gotd behavior. Human output warns when that side effect is possible, and

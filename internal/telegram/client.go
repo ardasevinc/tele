@@ -19,6 +19,7 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
 	gotdpeer "github.com/gotd/td/telegram/message/peer"
+	gotdmessages "github.com/gotd/td/telegram/query/messages"
 	"github.com/gotd/td/tg"
 	"golang.org/x/term"
 
@@ -87,6 +88,25 @@ type ReadOptions struct {
 	Chronological bool
 }
 
+type MediaDownloadOptions struct {
+	Peer      string
+	MessageID int
+	OutDir    string
+}
+
+type MediaDownloadResult struct {
+	OK           bool   `json:"ok"`
+	PeerRef      string `json:"peer_ref"`
+	MessageID    int    `json:"message_id"`
+	Path         string `json:"path"`
+	Bytes        int64  `json:"bytes"`
+	MediaType    string `json:"media_type"`
+	MimeType     string `json:"mime_type,omitempty"`
+	FileName     string `json:"file_name"`
+	StorageType  string `json:"storage_type,omitempty"`
+	DownloadedAt string `json:"downloaded_at"`
+}
+
 type MutationResult struct {
 	OK         bool   `json:"ok"`
 	Action     string `json:"action"`
@@ -138,7 +158,7 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 		Device: telegram.DeviceConfig{
 			DeviceModel:    "tele",
 			SystemVersion:  "macOS",
-			AppVersion:     "0.1.0-alpha.2",
+			AppVersion:     "0.1.0-alpha.3",
 			SystemLangCode: "en",
 			LangCode:       "en",
 		},
@@ -445,6 +465,82 @@ func (a App) Search(ctx context.Context, query, peerToken string, limit int) ([]
 	return out, err
 }
 
+func (a App) DownloadMedia(ctx context.Context, opts MediaDownloadOptions) (MediaDownloadResult, error) {
+	if strings.TrimSpace(opts.Peer) == "" {
+		return MediaDownloadResult{}, fmt.Errorf("peer is required")
+	}
+	if opts.MessageID <= 0 {
+		return MediaDownloadResult{}, fmt.Errorf("msg-id must be positive")
+	}
+	var out MediaDownloadResult
+	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
+		input, peerRef, err := a.resolvePeer(ctx, c, opts.Peer)
+		if err != nil {
+			return err
+		}
+		msg, err := fetchMessage(ctx, c, input, peerRef, opts.MessageID)
+		if err != nil {
+			return err
+		}
+		file, ok := (gotdmessages.Elem{Msg: msg, Peer: input}).File()
+		if !ok {
+			return fmt.Errorf("message %d has no downloadable media", opts.MessageID)
+		}
+		dir := strings.TrimSpace(opts.OutDir)
+		if dir == "" {
+			dir, err = os.MkdirTemp("", "tele-media-*")
+			if err != nil {
+				return err
+			}
+		} else if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		name := safeDownloadFileName(opts.MessageID, file.Name)
+		path := filepath.Join(dir, name)
+		storageType, err := downloadToPath(ctx, c, file.Location, path)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		peer := peerRef.Ref
+		if peer == "" {
+			peer = opts.Peer
+		}
+		out = MediaDownloadResult{
+			OK:           true,
+			PeerRef:      peer,
+			MessageID:    opts.MessageID,
+			Path:         path,
+			Bytes:        info.Size(),
+			MediaType:    mediaTypeName(msg),
+			MimeType:     file.MIMEType,
+			FileName:     name,
+			DownloadedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		if storageType != nil {
+			out.StorageType = storageType.TypeName()
+		}
+		return nil
+	})
+	return out, err
+}
+
+func downloadToPath(ctx context.Context, c *telegram.Client, location tg.InputFileLocationClass, path string) (_ tg.StorageFileTypeClass, err error) {
+	f, err := os.OpenFile(filepath.Clean(path), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("create output file: %w", err)
+	}
+	defer func() {
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+	}()
+	return c.Download(location).Parallel(ctx, f)
+}
+
 func (a App) Send(ctx context.Context, peerToken, text string, replyTo int) (MutationResult, error) {
 	return a.send(ctx, peerToken, text, replyTo, "send")
 }
@@ -712,16 +808,57 @@ func peerKey(p tg.PeerClass) string {
 	}
 }
 
-func messagesFromResult(sourcePeer string, res tg.MessagesMessagesClass) []Message {
-	var classes []tg.MessageClass
+func fetchMessage(ctx context.Context, c *telegram.Client, input tg.InputPeerClass, peerRef peerstore.Peer, msgID int) (*tg.Message, error) {
+	id := []tg.InputMessageClass{&tg.InputMessageID{ID: msgID}}
+	var (
+		res tg.MessagesMessagesClass
+		err error
+	)
+	if channel, ok := inputChannel(input, peerRef); ok {
+		res, err = c.API().ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{
+			Channel: channel,
+			ID:      id,
+		})
+	} else {
+		res, err = c.API().MessagesGetMessages(ctx, id)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, cls := range messageClasses(res) {
+		msg, ok := cls.(*tg.Message)
+		if ok && msg.ID == msgID {
+			return msg, nil
+		}
+	}
+	return nil, fmt.Errorf("message %d not found", msgID)
+}
+
+func inputChannel(input tg.InputPeerClass, peerRef peerstore.Peer) (*tg.InputChannel, bool) {
+	if channel, ok := input.(*tg.InputPeerChannel); ok {
+		return &tg.InputChannel{ChannelID: channel.ChannelID, AccessHash: channel.AccessHash}, true
+	}
+	if peerRef.Kind == "channel" || peerRef.Kind == "supergroup" {
+		return &tg.InputChannel{ChannelID: peerRef.ID, AccessHash: peerRef.AccessHash}, true
+	}
+	return nil, false
+}
+
+func messageClasses(res tg.MessagesMessagesClass) []tg.MessageClass {
 	switch v := res.(type) {
 	case *tg.MessagesMessages:
-		classes = v.Messages
+		return v.Messages
 	case *tg.MessagesMessagesSlice:
-		classes = v.Messages
+		return v.Messages
 	case *tg.MessagesChannelMessages:
-		classes = v.Messages
+		return v.Messages
+	default:
+		return nil
 	}
+}
+
+func messagesFromResult(sourcePeer string, res tg.MessagesMessagesClass) []Message {
+	classes := messageClasses(res)
 	out := make([]Message, 0, len(classes))
 	for _, cls := range classes {
 		switch msg := cls.(type) {
@@ -752,6 +889,33 @@ func messagesFromResult(sourcePeer string, res tg.MessagesMessagesClass) []Messa
 		}
 	}
 	return out
+}
+
+func mediaTypeName(msg *tg.Message) string {
+	if msg == nil {
+		return ""
+	}
+	media, ok := msg.GetMedia()
+	if !ok || media == nil {
+		return ""
+	}
+	return media.TypeName()
+}
+
+func safeDownloadFileName(msgID int, name string) string {
+	name = strings.TrimSpace(filepath.Base(name))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		name = "media"
+	}
+	name = strings.Map(func(r rune) rune {
+		switch r {
+		case 0, '/', '\\', ':':
+			return '-'
+		default:
+			return r
+		}
+	}, name)
+	return fmt.Sprintf("%d-%s", msgID, name)
 }
 
 func filterMessages(messages []Message, opts ReadOptions) []Message {

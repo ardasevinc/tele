@@ -41,6 +41,7 @@ tele read <peer> --around 123 --chronological --json
 tele inbox --json
 tele unread --json
 tele mentions --json
+tele media download <peer> 123 --json
 printf 'hello' | tele send <peer> --text-stdin --json
 printf 'reply' | tele reply <peer> 123 --text-stdin --json
 tele react <peer> 123 --emoji "👍" --json
@@ -55,4 +56,6 @@ Use `--json` when another tool needs structured fields.
 `tele read`, `tele search`, and `tele export` may mark messages read depending on
 Telegram/gotd behavior. Human output warns when that side effect is possible, and
 machine output includes envelope metadata with side effects where relevant.
-Media is never auto-downloaded.
+Media is never auto-downloaded by read/export commands. Use `tele media download`
+for one explicit message; it writes to a new temp directory by default and creates
+the downloaded file with `0600` permissions.

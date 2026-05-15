@@ -90,7 +90,7 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&s.jsonl, "jsonl", false, "write JSONL output")
 	cmd.PersistentFlags().BoolVar(&s.quiet, "quiet", false, "suppress human info output")
 	cmd.PersistentFlags().BoolVar(&s.verbose, "verbose", false, "write verbose diagnostics")
-	commands := []*cobra.Command{authCommand(s), meCommand(s), chatsCommand(s), readCommand(s), searchCommand(s), exportCommand(s), inboxCommand(s)}
+	commands := []*cobra.Command{authCommand(s), meCommand(s), chatsCommand(s), readCommand(s), searchCommand(s), exportCommand(s), inboxCommand(s), mediaCommand(s)}
 	commands = append(commands, mutationCommands(s)...)
 	cmd.AddCommand(commands...)
 	cmd.AddCommand(configCommand(s), profilesCommand(s), doctorCommand(s))
@@ -466,6 +466,47 @@ func inboxLikeCommand(s *appState, name, mode, short string) *cobra.Command {
 		cmd.AddCommand(inboxLikeCommand(s, "unread", "unread", "List dialogs with unread messages"))
 		cmd.AddCommand(inboxLikeCommand(s, "mentions", "mentions", "List dialogs with unread mentions"))
 	}
+	return cmd
+}
+
+func mediaCommand(s *appState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "media",
+		Short: "Inspect and download message media",
+	}
+	cmd.AddCommand(mediaDownloadCommand(s))
+	return cmd
+}
+
+func mediaDownloadCommand(s *appState) *cobra.Command {
+	var outDir string
+	cmd := &cobra.Command{
+		Use:   "download <peer> <msg-id>",
+		Short: "Download media from one message",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			msgID, err := parsePositiveInt(args[1], "msg-id")
+			if err != nil {
+				return err
+			}
+			app, err := s.telegramApp()
+			if err != nil {
+				return err
+			}
+			result, err := app.DownloadMedia(cmd.Context(), tgapp.MediaDownloadOptions{
+				Peer:      args[0],
+				MessageID: msgID,
+				OutDir:    outDir,
+			})
+			if err != nil {
+				return err
+			}
+			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
+				return w.Print(fmt.Sprintf("downloaded %s", result.Path))
+			})
+		},
+	}
+	cmd.Flags().StringVar(&outDir, "out-dir", "", "directory for downloaded media; defaults to a new temp directory")
 	return cmd
 }
 

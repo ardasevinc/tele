@@ -45,12 +45,13 @@ func ExitCode(err error) int {
 }
 
 type appState struct {
-	cfgPath string
-	profile string
-	json    bool
-	jsonl   bool
-	quiet   bool
-	verbose bool
+	cfgPath  string
+	profile  string
+	json     bool
+	jsonl    bool
+	quiet    bool
+	verbose  bool
+	readOnly bool
 
 	in  io.Reader
 	out io.Writer
@@ -90,6 +91,7 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&s.jsonl, "jsonl", false, "write JSONL output")
 	cmd.PersistentFlags().BoolVar(&s.quiet, "quiet", false, "suppress human info output")
 	cmd.PersistentFlags().BoolVar(&s.verbose, "verbose", false, "write verbose diagnostics")
+	cmd.PersistentFlags().BoolVar(&s.readOnly, "read-only", false, "reject Telegram message mutations")
 	commands := []*cobra.Command{authCommand(s), meCommand(s), chatsCommand(s), readCommand(s), searchCommand(s), exportCommand(s), inboxCommand(s), mediaCommand(s)}
 	commands = append(commands, mutationCommands(s)...)
 	cmd.AddCommand(commands...)
@@ -530,6 +532,9 @@ func sendCommand(s *appState) *cobra.Command {
 		Short: "Send a text message",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := s.requireWritable("send"); err != nil {
+				return err
+			}
 			body, err := textInput(s, text, textStdin)
 			if err != nil {
 				return err
@@ -543,7 +548,7 @@ func sendCommand(s *appState) *cobra.Command {
 				return err
 			}
 			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
-				return w.Print(fmt.Sprintf("sent %s #%d", result.PeerRef, result.MessageID))
+				return w.Print(s.mutationReceipt(fmt.Sprintf("sent %s #%d", result.PeerRef, result.MessageID)))
 			})
 		},
 	}
@@ -560,6 +565,9 @@ func replyCommand(s *appState) *cobra.Command {
 		Short: "Reply to a message",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := s.requireWritable("reply"); err != nil {
+				return err
+			}
 			msgID, err := parsePositiveInt(args[1], "msg-id")
 			if err != nil {
 				return err
@@ -578,7 +586,7 @@ func replyCommand(s *appState) *cobra.Command {
 			}
 			result.Action = "reply"
 			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
-				return w.Print(fmt.Sprintf("replied %s #%d", result.PeerRef, result.MessageID))
+				return w.Print(s.mutationReceipt(fmt.Sprintf("replied %s #%d", result.PeerRef, result.MessageID)))
 			})
 		},
 	}
@@ -594,6 +602,9 @@ func reactCommand(s *appState) *cobra.Command {
 		Short: "React to a message",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := s.requireWritable("react"); err != nil {
+				return err
+			}
 			msgID, err := parsePositiveInt(args[1], "msg-id")
 			if err != nil {
 				return err
@@ -610,7 +621,7 @@ func reactCommand(s *appState) *cobra.Command {
 				return err
 			}
 			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
-				return w.Print(fmt.Sprintf("reacted %s #%d", result.PeerRef, result.MessageID))
+				return w.Print(s.mutationReceipt(fmt.Sprintf("reacted %s #%d", result.PeerRef, result.MessageID)))
 			})
 		},
 	}
@@ -626,6 +637,9 @@ func editCommand(s *appState) *cobra.Command {
 		Short: "Edit one of your messages",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := s.requireWritable("edit"); err != nil {
+				return err
+			}
 			msgID, err := parsePositiveInt(args[1], "msg-id")
 			if err != nil {
 				return err
@@ -643,7 +657,7 @@ func editCommand(s *appState) *cobra.Command {
 				return err
 			}
 			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
-				return w.Print(fmt.Sprintf("edited %s #%d", result.PeerRef, result.MessageID))
+				return w.Print(s.mutationReceipt(fmt.Sprintf("edited %s #%d", result.PeerRef, result.MessageID)))
 			})
 		},
 	}
@@ -661,6 +675,9 @@ func deleteCommand(s *appState) *cobra.Command {
 		Short: "Delete a message",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := s.requireWritable("delete"); err != nil {
+				return err
+			}
 			if !yes {
 				return fmt.Errorf("delete requires --yes")
 			}
@@ -684,7 +701,7 @@ func deleteCommand(s *appState) *cobra.Command {
 				return err
 			}
 			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
-				return w.Print(fmt.Sprintf("deleted %s #%d", result.PeerRef, result.MessageID))
+				return w.Print(s.mutationReceipt(fmt.Sprintf("deleted %s #%d", result.PeerRef, result.MessageID)))
 			})
 		},
 	}
@@ -1204,6 +1221,17 @@ func (s *appState) profileName() string {
 		return s.profile
 	}
 	return name
+}
+
+func (s *appState) requireWritable(action string) error {
+	if !s.readOnly {
+		return nil
+	}
+	return fmt.Errorf("%s is disabled by --read-only", action)
+}
+
+func (s *appState) mutationReceipt(receipt string) string {
+	return fmt.Sprintf("[profile %s] %s", s.profileName(), receipt)
 }
 
 func parseTimeFilter(value string, now time.Time) (time.Time, error) {

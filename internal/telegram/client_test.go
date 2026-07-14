@@ -47,6 +47,7 @@ func TestPlanDelete(t *testing.T) {
 		{name: "basic group for me", input: &tg.InputPeerChat{}, scope: DeleteScopeForMe, wantRoute: deleteRouteMessages},
 		{name: "basic group revoke", input: &tg.InputPeerChat{}, scope: DeleteScopeRevoke, wantRoute: deleteRouteMessages, wantRevoke: true},
 		{name: "cached channel for me rejected", input: &tg.InputPeerChannel{ChannelID: 42, AccessHash: 7}, scope: DeleteScopeForMe, wantErr: "only be deleted with --revoke --yes"},
+		{name: "cached supergroup for me rejected", input: &tg.InputPeerChannel{ChannelID: 42, AccessHash: 7}, scope: DeleteScopeForMe, wantErr: "only be deleted with --revoke --yes"},
 		{name: "username resolved channel for me rejected", input: &tg.InputPeerChannel{ChannelID: 84, AccessHash: 9}, scope: DeleteScopeForMe, wantErr: "only be deleted with --revoke --yes"},
 		{name: "channel revoke", input: &tg.InputPeerChannel{ChannelID: 42, AccessHash: 7}, scope: DeleteScopeRevoke, wantRoute: deleteRouteChannels},
 		{name: "unknown scope", input: &tg.InputPeerUser{}, scope: DeleteScope("unknown"), wantErr: "unsupported delete scope"},

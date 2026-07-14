@@ -116,6 +116,26 @@ type MutationResult struct {
 	Timestamp  string `json:"timestamp"`
 }
 
+type DeleteScope string
+
+const (
+	DeleteScopeForMe  DeleteScope = "for_me"
+	DeleteScopeRevoke DeleteScope = "revoke"
+)
+
+type deleteRoute string
+
+const (
+	deleteRouteMessages deleteRoute = "messages.deleteMessages"
+	deleteRouteChannels deleteRoute = "channels.deleteMessages"
+)
+
+type deletePlan struct {
+	Route   deleteRoute
+	Channel *tg.InputChannel
+	Revoke  bool
+}
+
 type authPending struct {
 	Phone         string `json:"phone"`
 	PhoneCodeHash string `json:"phone_code_hash"`
@@ -585,23 +605,29 @@ func (a App) React(ctx context.Context, peerToken string, msgID int, emoji strin
 	return out, err
 }
 
-func (a App) DeleteMessage(ctx context.Context, peerToken string, msgID int, revoke bool) (MutationResult, error) {
+func (a App) DeleteMessage(ctx context.Context, peerToken string, msgID int, scope DeleteScope) (MutationResult, error) {
 	var out MutationResult
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
-		_, peerRef, err := a.resolvePeer(ctx, c, peerToken)
+		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
 		if err != nil {
 			return err
 		}
-		switch peerRef.Kind {
-		case "channel", "supergroup":
+		plan, err := planDelete(input, scope)
+		if err != nil {
+			return err
+		}
+		switch plan.Route {
+		case deleteRouteChannels:
 			_, err = c.API().ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{
-				Channel: &tg.InputChannel{ChannelID: peerRef.ID, AccessHash: peerRef.AccessHash},
+				Channel: plan.Channel,
 				ID:      []int{msgID},
 			})
-		default:
+		case deleteRouteMessages:
 			req := &tg.MessagesDeleteMessagesRequest{ID: []int{msgID}}
-			req.SetRevoke(revoke)
+			req.SetRevoke(plan.Revoke)
 			_, err = c.API().MessagesDeleteMessages(ctx, req)
+		default:
+			return fmt.Errorf("unsupported delete route %q", plan.Route)
 		}
 		if err != nil {
 			return err
@@ -611,6 +637,22 @@ func (a App) DeleteMessage(ctx context.Context, peerToken string, msgID int, rev
 		return nil
 	})
 	return out, err
+}
+
+func planDelete(input tg.InputPeerClass, scope DeleteScope) (deletePlan, error) {
+	if scope != DeleteScopeForMe && scope != DeleteScopeRevoke {
+		return deletePlan{}, fmt.Errorf("unsupported delete scope %q", scope)
+	}
+	if channel, ok := input.(*tg.InputPeerChannel); ok {
+		if scope != DeleteScopeRevoke {
+			return deletePlan{}, fmt.Errorf("channel and supergroup messages can only be deleted with --revoke --yes")
+		}
+		return deletePlan{
+			Route:   deleteRouteChannels,
+			Channel: &tg.InputChannel{ChannelID: channel.ChannelID, AccessHash: channel.AccessHash},
+		}, nil
+	}
+	return deletePlan{Route: deleteRouteMessages, Revoke: scope == DeleteScopeRevoke}, nil
 }
 
 func (a App) send(ctx context.Context, peerToken, text string, replyTo int, action string) (MutationResult, error) {

@@ -675,7 +675,11 @@ func deleteCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := app.DeleteMessage(cmd.Context(), args[0], msgID, revoke)
+			scope := tgapp.DeleteScopeForMe
+			if revoke {
+				scope = tgapp.DeleteScopeRevoke
+			}
+			result, err := app.DeleteMessage(cmd.Context(), args[0], msgID, scope)
 			if err != nil {
 				return err
 			}

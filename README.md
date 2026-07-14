@@ -8,8 +8,9 @@ config, read/search/export, inbox triage, and opt-in message mutations.
 
 ## Status
 
-Early alpha. macOS is the first supported secret-storage target because sessions
-and API hashes are stored in Keychain.
+Early alpha. macOS is the first supported secret-storage target. API hashes and
+the session-encryption key are stored in Keychain; encrypted MTProto session
+bytes live under the profile data directory.
 
 ## Install from source
 

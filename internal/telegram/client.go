@@ -24,6 +24,7 @@ import (
 	"github.com/gotd/td/tgerr"
 	"golang.org/x/term"
 
+	"github.com/ardasevinc/tele/internal/buildinfo"
 	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/peerstore"
 	"github.com/ardasevinc/tele/internal/secrets"
@@ -150,7 +151,7 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 		Device: telegram.DeviceConfig{
 			DeviceModel:    "tele",
 			SystemVersion:  "macOS",
-			AppVersion:     "0.1.0-alpha.3",
+			AppVersion:     buildinfo.Version,
 			SystemLangCode: "en",
 			LangCode:       "en",
 		},

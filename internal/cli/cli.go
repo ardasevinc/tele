@@ -52,6 +52,7 @@ type appState struct {
 	quiet    bool
 	verbose  bool
 	readOnly bool
+	dryRun   bool
 
 	in  io.Reader
 	out io.Writer
@@ -92,6 +93,7 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&s.quiet, "quiet", false, "suppress human info output")
 	cmd.PersistentFlags().BoolVar(&s.verbose, "verbose", false, "write verbose diagnostics")
 	cmd.PersistentFlags().BoolVar(&s.readOnly, "read-only", false, "reject Telegram message mutations")
+	cmd.PersistentFlags().BoolVar(&s.dryRun, "dry-run", false, "resolve and validate message mutations without dispatching them")
 	commands := []*cobra.Command{authCommand(s), meCommand(s), chatsCommand(s), readCommand(s), searchCommand(s), exportCommand(s), inboxCommand(s), mediaCommand(s)}
 	commands = append(commands, mutationCommands(s)...)
 	cmd.AddCommand(commands...)
@@ -535,6 +537,9 @@ func sendCommand(s *appState) *cobra.Command {
 			if err := s.requireWritable("send"); err != nil {
 				return err
 			}
+			if s.dryRun {
+				return previewMutation(s, cmd.Context(), "send", args[0], 0, "")
+			}
 			body, err := textInput(s, text, textStdin)
 			if err != nil {
 				return err
@@ -569,6 +574,9 @@ func replyCommand(s *appState) *cobra.Command {
 			msgID, err := parsePositiveInt(args[1], "msg-id")
 			if err != nil {
 				return err
+			}
+			if s.dryRun {
+				return previewMutation(s, cmd.Context(), "reply", args[0], msgID, "")
 			}
 			body, err := textInput(s, text, textStdin)
 			if err != nil {
@@ -608,6 +616,9 @@ func reactCommand(s *appState) *cobra.Command {
 			if strings.TrimSpace(emoji) == "" {
 				return fmt.Errorf("--emoji is required")
 			}
+			if s.dryRun {
+				return previewMutation(s, cmd.Context(), "react", args[0], msgID, "")
+			}
 			app, err := s.telegramApp()
 			if err != nil {
 				return err
@@ -637,6 +648,9 @@ func editCommand(s *appState) *cobra.Command {
 			msgID, err := parsePositiveInt(args[1], "msg-id")
 			if err != nil {
 				return err
+			}
+			if s.dryRun {
+				return previewMutation(s, cmd.Context(), "edit", args[0], msgID, "")
 			}
 			body, err := textInput(s, text, textStdin)
 			if err != nil {
@@ -670,7 +684,7 @@ func deleteCommand(s *appState) *cobra.Command {
 			if err := s.requireWritable("delete"); err != nil {
 				return err
 			}
-			if !yes {
+			if !yes && !s.dryRun {
 				return fmt.Errorf("delete requires --yes")
 			}
 			if forMe == revoke {
@@ -680,13 +694,16 @@ func deleteCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			app, err := s.telegramApp()
-			if err != nil {
-				return err
-			}
 			scope := tgapp.DeleteScopeForMe
 			if revoke {
 				scope = tgapp.DeleteScopeRevoke
+			}
+			if s.dryRun {
+				return previewMutation(s, cmd.Context(), "delete", args[0], msgID, scope)
+			}
+			app, err := s.telegramApp()
+			if err != nil {
+				return err
 			}
 			result, err := app.DeleteMessage(cmd.Context(), args[0], msgID, scope)
 			if err != nil {
@@ -1016,6 +1033,21 @@ func writeMutationResult(s *appState, result tgapp.MutationResult, meta output.M
 	return nil
 }
 
+func previewMutation(s *appState, ctx context.Context, action, peerRef string, msgID int, scope tgapp.DeleteScope) error {
+	app, err := s.telegramApp()
+	if err != nil {
+		return err
+	}
+	preview, err := app.PreviewMutation(ctx, action, peerRef, msgID, scope)
+	if err != nil {
+		return err
+	}
+	meta := s.meta(0, preview.PeerRef, nil)
+	return writeValueWithMeta(s, preview, meta, func(w output.Writer) error {
+		return w.Print(fmt.Sprintf("[profile %s] dry-run: %s %s", meta.Profile, action, preview.PeerRef))
+	})
+}
+
 func writeMessages(s *appState, messages []tgapp.Message, meta output.Meta) error {
 	w := s.writer()
 	if w.Format == output.JSON {
@@ -1224,7 +1256,7 @@ func (s *appState) profileName() string {
 }
 
 func (s *appState) requireWritable(action string) error {
-	if !s.readOnly {
+	if !s.readOnly || s.dryRun {
 		return nil
 	}
 	return fmt.Errorf("%s is disabled by --read-only", action)

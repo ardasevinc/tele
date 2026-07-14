@@ -120,6 +120,16 @@ type MutationResult struct {
 	Timestamp            string          `json:"timestamp"`
 }
 
+type MutationPreview struct {
+	OK        bool        `json:"ok"`
+	DryRun    bool        `json:"dry_run"`
+	Action    string      `json:"action"`
+	PeerRef   string      `json:"peer_ref"`
+	MessageID int         `json:"message_id,omitempty"`
+	Scope     DeleteScope `json:"scope,omitempty"`
+	Timestamp string      `json:"timestamp"`
+}
+
 type MutationOutcome string
 
 const (
@@ -609,6 +619,42 @@ func downloadToPath(ctx context.Context, c *telegram.Client, location tg.InputFi
 
 func (a App) Send(ctx context.Context, peerToken, text string, replyTo int) (MutationResult, error) {
 	return a.send(ctx, peerToken, text, replyTo, "send")
+}
+
+func (a App) PreviewMutation(ctx context.Context, action, peerToken string, msgID int, scope DeleteScope) (MutationPreview, error) {
+	var out MutationPreview
+	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
+		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
+		if err != nil {
+			return err
+		}
+		if err := validateMutationPreview(action, input, scope); err != nil {
+			return err
+		}
+		out = MutationPreview{
+			OK:        true,
+			DryRun:    true,
+			Action:    action,
+			PeerRef:   peerRef.Ref,
+			MessageID: msgID,
+			Scope:     scope,
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		}
+		return nil
+	})
+	return out, err
+}
+
+func validateMutationPreview(action string, input tg.InputPeerClass, scope DeleteScope) error {
+	switch action {
+	case "send", "reply", "react", "edit":
+		return nil
+	case "delete":
+		_, err := planDelete(input, scope)
+		return err
+	default:
+		return fmt.Errorf("unsupported mutation action %q", action)
+	}
 }
 
 func (a App) Edit(ctx context.Context, peerToken string, msgID int, text string) (MutationResult, error) {

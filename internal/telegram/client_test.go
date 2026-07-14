@@ -103,6 +103,18 @@ func TestMutationFailureOutcomes(t *testing.T) {
 	}
 }
 
+func TestValidateMutationPreview(t *testing.T) {
+	if err := validateMutationPreview("send", &tg.InputPeerUser{}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateMutationPreview("delete", &tg.InputPeerChannel{}, DeleteScopeForMe); err == nil {
+		t.Fatal("validateMutationPreview accepted channel --for-me")
+	}
+	if err := validateMutationPreview("unknown", &tg.InputPeerUser{}, ""); err == nil {
+		t.Fatal("validateMutationPreview accepted unknown action")
+	}
+}
+
 func TestMutationResultConfirmedWithoutMessageID(t *testing.T) {
 	got := mutationResult("send", "user:1", 0, "random_id:42")
 	if !got.OK || got.Outcome != MutationConfirmed || got.RetrySafe || got.MessageID != 0 || got.ReconciliationHandle != "random_id:42" {

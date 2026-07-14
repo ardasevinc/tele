@@ -57,6 +57,13 @@ func TestReadOnlyRejectsMutation(t *testing.T) {
 	}
 }
 
+func TestReadOnlyAllowsDryRun(t *testing.T) {
+	state := &appState{readOnly: true, dryRun: true}
+	if err := state.requireWritable("send"); err != nil {
+		t.Fatalf("requireWritable rejected dry run: %v", err)
+	}
+}
+
 func TestReadOnlyGuardsEveryMutationCommand(t *testing.T) {
 	tests := [][]string{
 		{"--read-only", "send", "user:1", "--text", "hello"},

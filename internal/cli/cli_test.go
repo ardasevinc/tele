@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,10 @@ import (
 	"github.com/ardasevinc/tele/internal/output"
 	tgapp "github.com/ardasevinc/tele/internal/telegram"
 )
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
 
 func TestParseTimeFilterDuration(t *testing.T) {
 	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
@@ -76,8 +81,25 @@ func TestReadOnlyGuardsEveryMutationCommand(t *testing.T) {
 func TestMutationReceiptIncludesProfile(t *testing.T) {
 	state := &appState{profile: "test"}
 	got := state.mutationReceipt("sent user:1 #42")
-	if got != "[profile test] sent user:1 #42" {
+	if got != "[profile test] confirmed: sent user:1 #42" {
 		t.Fatalf("mutationReceipt = %q", got)
+	}
+}
+
+func TestWriteMutationResultPreservesConfirmedOutcomeOnOutputFailure(t *testing.T) {
+	state := &appState{out: failingWriter{}, err: &bytes.Buffer{}}
+	result := tgapp.MutationResult{
+		OK:                   true,
+		Outcome:              tgapp.MutationConfirmed,
+		ReconciliationHandle: "random_id:42",
+	}
+	err := writeMutationResult(state, result, output.NewMeta("test"), "confirmed")
+	var mutationErr tgapp.MutationError
+	if !errors.As(err, &mutationErr) {
+		t.Fatalf("writeMutationResult error = %T, want MutationError", err)
+	}
+	if mutationErr.Outcome != tgapp.MutationConfirmed || mutationErr.RetrySafe {
+		t.Fatalf("writeMutationResult error = %+v", mutationErr)
 	}
 }
 

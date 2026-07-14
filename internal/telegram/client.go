@@ -21,6 +21,7 @@ import (
 	gotdpeer "github.com/gotd/td/telegram/message/peer"
 	gotdmessages "github.com/gotd/td/telegram/query/messages"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"golang.org/x/term"
 
 	"github.com/ardasevinc/tele/internal/config"
@@ -108,12 +109,57 @@ type MediaDownloadResult struct {
 }
 
 type MutationResult struct {
-	OK         bool   `json:"ok"`
-	Action     string `json:"action"`
-	PeerRef    string `json:"peer_ref"`
-	MessageID  int    `json:"message_id,omitempty"`
-	MessageIDs []int  `json:"message_ids,omitempty"`
-	Timestamp  string `json:"timestamp"`
+	OK                   bool            `json:"ok"`
+	Outcome              MutationOutcome `json:"outcome"`
+	RetrySafe            bool            `json:"retry_safe"`
+	Action               string          `json:"action"`
+	PeerRef              string          `json:"peer_ref"`
+	MessageID            int             `json:"message_id,omitempty"`
+	MessageIDs           []int           `json:"message_ids,omitempty"`
+	ReconciliationHandle string          `json:"reconciliation_handle"`
+	Timestamp            string          `json:"timestamp"`
+}
+
+type MutationOutcome string
+
+const (
+	MutationConfirmed      MutationOutcome = "confirmed"
+	MutationRejected       MutationOutcome = "rejected"
+	MutationOutcomeUnknown MutationOutcome = "outcome_unknown"
+)
+
+type MutationError struct {
+	Outcome              MutationOutcome
+	RetrySafe            bool
+	ReconciliationHandle string
+	Err                  error
+}
+
+func (e MutationError) Error() string {
+	if e.Outcome == MutationOutcomeUnknown {
+		return fmt.Sprintf("mutation outcome unknown; do not retry blindly: %v", e.Err)
+	}
+	if e.Outcome == MutationConfirmed {
+		return fmt.Sprintf("mutation confirmed but receipt output failed; do not retry: %v", e.Err)
+	}
+	return e.Err.Error()
+}
+
+func (e MutationError) Unwrap() error { return e.Err }
+
+func (e MutationError) MutationOutcomeCode() string { return string(e.Outcome) }
+
+func (e MutationError) MutationRetrySafe() bool { return e.RetrySafe }
+
+func (e MutationError) MutationReconciliationHandle() string { return e.ReconciliationHandle }
+
+func ConfirmedMutationOutputError(result MutationResult, err error) error {
+	return MutationError{
+		Outcome:              MutationConfirmed,
+		RetrySafe:            false,
+		ReconciliationHandle: result.ReconciliationHandle,
+		Err:                  err,
+	}
 }
 
 type DeleteScope string
@@ -567,46 +613,56 @@ func (a App) Send(ctx context.Context, peerToken, text string, replyTo int) (Mut
 
 func (a App) Edit(ctx context.Context, peerToken string, msgID int, text string) (MutationResult, error) {
 	var out MutationResult
+	handle := mutationHandle("edit", peerToken, msgID)
+	dispatched := false
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
 		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
 		if err != nil {
 			return err
 		}
+		handle = mutationHandle("edit", peerRef.Ref, msgID)
 		req := &tg.MessagesEditMessageRequest{Peer: input, ID: msgID}
 		req.SetMessage(strings.TrimSpace(text))
+		dispatched = true
 		if _, err := c.API().MessagesEditMessage(ctx, req); err != nil {
 			return err
 		}
-		out = mutationResult("edit", peerRef.Ref, msgID)
+		out = mutationResult("edit", peerRef.Ref, msgID, handle)
 		return nil
 	})
-	return out, err
+	return out, mutationFailure(err, dispatched, handle)
 }
 
 func (a App) React(ctx context.Context, peerToken string, msgID int, emoji string) (MutationResult, error) {
 	var out MutationResult
+	handle := mutationHandle("react", peerToken, msgID)
+	dispatched := false
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
 		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
 		if err != nil {
 			return err
 		}
+		handle = mutationHandle("react", peerRef.Ref, msgID)
 		req := &tg.MessagesSendReactionRequest{
 			Peer:        input,
 			MsgID:       msgID,
 			AddToRecent: true,
 		}
 		req.SetReaction([]tg.ReactionClass{&tg.ReactionEmoji{Emoticon: strings.TrimSpace(emoji)}})
+		dispatched = true
 		if _, err := c.API().MessagesSendReaction(ctx, req); err != nil {
 			return err
 		}
-		out = mutationResult("react", peerRef.Ref, msgID)
+		out = mutationResult("react", peerRef.Ref, msgID, handle)
 		return nil
 	})
-	return out, err
+	return out, mutationFailure(err, dispatched, handle)
 }
 
 func (a App) DeleteMessage(ctx context.Context, peerToken string, msgID int, scope DeleteScope) (MutationResult, error) {
 	var out MutationResult
+	handle := mutationHandle("delete", peerToken, msgID)
+	dispatched := false
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
 		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
 		if err != nil {
@@ -616,8 +672,10 @@ func (a App) DeleteMessage(ctx context.Context, peerToken string, msgID int, sco
 		if err != nil {
 			return err
 		}
+		handle = mutationHandle("delete", peerRef.Ref, msgID)
 		switch plan.Route {
 		case deleteRouteChannels:
+			dispatched = true
 			_, err = c.API().ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{
 				Channel: plan.Channel,
 				ID:      []int{msgID},
@@ -625,6 +683,7 @@ func (a App) DeleteMessage(ctx context.Context, peerToken string, msgID int, sco
 		case deleteRouteMessages:
 			req := &tg.MessagesDeleteMessagesRequest{ID: []int{msgID}}
 			req.SetRevoke(plan.Revoke)
+			dispatched = true
 			_, err = c.API().MessagesDeleteMessages(ctx, req)
 		default:
 			return fmt.Errorf("unsupported delete route %q", plan.Route)
@@ -632,11 +691,11 @@ func (a App) DeleteMessage(ctx context.Context, peerToken string, msgID int, sco
 		if err != nil {
 			return err
 		}
-		out = mutationResult("delete", peerRef.Ref, msgID)
+		out = mutationResult("delete", peerRef.Ref, msgID, handle)
 		out.MessageIDs = []int{msgID}
 		return nil
 	})
-	return out, err
+	return out, mutationFailure(err, dispatched, handle)
 }
 
 func planDelete(input tg.InputPeerClass, scope DeleteScope) (deletePlan, error) {
@@ -661,6 +720,9 @@ func (a App) send(ctx context.Context, peerToken, text string, replyTo int, acti
 		return MutationResult{}, fmt.Errorf("message text is required")
 	}
 	var out MutationResult
+	requestID := randomID()
+	handle := "random_id:" + strconv.FormatInt(requestID, 10)
+	dispatched := false
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
 		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
 		if err != nil {
@@ -669,20 +731,21 @@ func (a App) send(ctx context.Context, peerToken, text string, replyTo int, acti
 		req := &tg.MessagesSendMessageRequest{
 			Peer:      input,
 			Message:   text,
-			RandomID:  randomID(),
+			RandomID:  requestID,
 			NoWebpage: true,
 		}
 		if replyTo > 0 {
 			req.SetReplyTo(&tg.InputReplyToMessage{ReplyToMsgID: replyTo})
 		}
+		dispatched = true
 		updates, err := c.API().MessagesSendMessage(ctx, req)
 		if err != nil {
 			return err
 		}
-		out = mutationResult(action, peerRef.Ref, sentMessageID(updates))
+		out = mutationResult(action, peerRef.Ref, sentMessageID(updates), handle)
 		return nil
 	})
-	return out, err
+	return out, mutationFailure(err, dispatched, handle)
 }
 
 func (a App) pendingAuth(ctx context.Context) (authPending, error) {
@@ -990,13 +1053,42 @@ func filterMessages(messages []Message, opts ReadOptions) []Message {
 	return out
 }
 
-func mutationResult(action, peerRef string, msgID int) MutationResult {
+func mutationResult(action, peerRef string, msgID int, handle string) MutationResult {
 	return MutationResult{
-		OK:        true,
-		Action:    action,
-		PeerRef:   peerRef,
-		MessageID: msgID,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		OK:                   true,
+		Outcome:              MutationConfirmed,
+		RetrySafe:            false,
+		Action:               action,
+		PeerRef:              peerRef,
+		MessageID:            msgID,
+		ReconciliationHandle: handle,
+		Timestamp:            time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+func mutationHandle(action, peerRef string, msgID int) string {
+	return fmt.Sprintf("action:%s/peer:%s/message:%d", action, peerRef, msgID)
+}
+
+func mutationFailure(err error, dispatched bool, handle string) error {
+	if err == nil {
+		return nil
+	}
+	outcome := MutationRejected
+	retrySafe := !dispatched
+	if dispatched {
+		if _, ok := tgerr.As(err); ok {
+			retrySafe = true
+		} else {
+			outcome = MutationOutcomeUnknown
+			retrySafe = false
+		}
+	}
+	return MutationError{
+		Outcome:              outcome,
+		RetrySafe:            retrySafe,
+		ReconciliationHandle: handle,
+		Err:                  err,
 	}
 }
 

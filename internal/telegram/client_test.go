@@ -1,10 +1,13 @@
 package telegram
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 )
 
 func TestParseAPIID(t *testing.T) {
@@ -69,5 +72,50 @@ func TestPlanDelete(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMutationFailureOutcomes(t *testing.T) {
+	tests := []struct {
+		name          string
+		err           error
+		dispatched    bool
+		wantOutcome   MutationOutcome
+		wantRetrySafe bool
+	}{
+		{name: "pre-dispatch rejected", err: errors.New("resolve failed"), wantOutcome: MutationRejected, wantRetrySafe: true},
+		{name: "telegram rejected", err: tgerr.New(400, "MESSAGE_ID_INVALID"), dispatched: true, wantOutcome: MutationRejected, wantRetrySafe: true},
+		{name: "post-dispatch timeout unknown", err: context.DeadlineExceeded, dispatched: true, wantOutcome: MutationOutcomeUnknown},
+		{name: "post-dispatch transport unknown", err: errors.New("connection reset"), dispatched: true, wantOutcome: MutationOutcomeUnknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := mutationFailure(tt.err, tt.dispatched, "handle:1")
+			var mutationErr MutationError
+			if !errors.As(err, &mutationErr) {
+				t.Fatalf("mutationFailure returned %T, want MutationError", err)
+			}
+			if mutationErr.Outcome != tt.wantOutcome || mutationErr.RetrySafe != tt.wantRetrySafe {
+				t.Fatalf("mutationFailure = %+v, want outcome %q retry_safe %t", mutationErr, tt.wantOutcome, tt.wantRetrySafe)
+			}
+		})
+	}
+}
+
+func TestMutationResultConfirmedWithoutMessageID(t *testing.T) {
+	got := mutationResult("send", "user:1", 0, "random_id:42")
+	if !got.OK || got.Outcome != MutationConfirmed || got.RetrySafe || got.MessageID != 0 || got.ReconciliationHandle != "random_id:42" {
+		t.Fatalf("mutationResult = %+v", got)
+	}
+}
+
+func TestConfirmedMutationOutputError(t *testing.T) {
+	err := ConfirmedMutationOutputError(MutationResult{ReconciliationHandle: "random_id:42"}, errors.New("broken pipe"))
+	var mutationErr MutationError
+	if !errors.As(err, &mutationErr) {
+		t.Fatalf("ConfirmedMutationOutputError returned %T", err)
+	}
+	if mutationErr.Outcome != MutationConfirmed || mutationErr.RetrySafe || mutationErr.ReconciliationHandle != "random_id:42" {
+		t.Fatalf("ConfirmedMutationOutputError = %+v", mutationErr)
 	}
 }

@@ -72,11 +72,21 @@ type ErrorResponse struct {
 }
 
 type ErrorBody struct {
-	Code              string `json:"code"`
-	Message           string `json:"message"`
-	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
-	TelegramCode      int    `json:"telegram_code,omitempty"`
-	TelegramType      string `json:"telegram_type,omitempty"`
+	Code                 string `json:"code"`
+	Message              string `json:"message"`
+	Outcome              string `json:"outcome,omitempty"`
+	RetrySafe            *bool  `json:"retry_safe,omitempty"`
+	ReconciliationHandle string `json:"reconciliation_handle,omitempty"`
+	Guidance             string `json:"guidance,omitempty"`
+	RetryAfterSeconds    int    `json:"retry_after_seconds,omitempty"`
+	TelegramCode         int    `json:"telegram_code,omitempty"`
+	TelegramType         string `json:"telegram_type,omitempty"`
+}
+
+type mutationFailure interface {
+	MutationOutcomeCode() string
+	MutationRetrySafe() bool
+	MutationReconciliationHandle() string
 }
 
 type Meta struct {
@@ -105,6 +115,23 @@ func ErrorFrom(err error) ErrorResponse {
 		Code:    "command_failed",
 		Message: err.Error(),
 	}
+	var mutationErr mutationFailure
+	if errors.As(err, &mutationErr) {
+		retrySafe := mutationErr.MutationRetrySafe()
+		body.Outcome = mutationErr.MutationOutcomeCode()
+		body.RetrySafe = &retrySafe
+		body.ReconciliationHandle = mutationErr.MutationReconciliationHandle()
+		switch body.Outcome {
+		case "outcome_unknown":
+			body.Code = "mutation_outcome_unknown"
+			body.Guidance = "do not retry blindly; reconcile the operation first"
+		case "confirmed":
+			body.Code = "mutation_confirmed_output_failed"
+			body.Guidance = "the mutation was confirmed; do not retry"
+		case "rejected":
+			body.Code = "mutation_rejected"
+		}
+	}
 	if d, ok := tgerr.AsFloodWait(err); ok {
 		body.Code = "telegram_flood_wait"
 		body.RetryAfterSeconds = int(d / time.Second)
@@ -112,7 +139,7 @@ func ErrorFrom(err error) ErrorResponse {
 	if rpcErr, ok := tgerr.As(err); ok {
 		body.TelegramCode = rpcErr.Code
 		body.TelegramType = rpcErr.Type
-		if body.Code == "command_failed" {
+		if body.Code == "command_failed" || body.Code == "mutation_rejected" {
 			body.Code = "telegram_rpc_error"
 			if rpcErr.Type != "" {
 				body.Code = "telegram_" + strings.ToLower(rpcErr.Type)

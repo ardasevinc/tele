@@ -547,9 +547,7 @@ func sendCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
-				return w.Print(s.mutationReceipt(fmt.Sprintf("sent %s #%d", result.PeerRef, result.MessageID)))
-			})
+			return writeMutationResult(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), s.mutationReceipt(fmt.Sprintf("sent %s #%d", result.PeerRef, result.MessageID)))
 		},
 	}
 	cmd.Flags().StringVar(&text, "text", "", "message text")
@@ -585,9 +583,7 @@ func replyCommand(s *appState) *cobra.Command {
 				return err
 			}
 			result.Action = "reply"
-			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
-				return w.Print(s.mutationReceipt(fmt.Sprintf("replied %s #%d", result.PeerRef, result.MessageID)))
-			})
+			return writeMutationResult(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), s.mutationReceipt(fmt.Sprintf("replied %s #%d", result.PeerRef, result.MessageID)))
 		},
 	}
 	cmd.Flags().StringVar(&text, "text", "", "message text")
@@ -620,9 +616,7 @@ func reactCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
-				return w.Print(s.mutationReceipt(fmt.Sprintf("reacted %s #%d", result.PeerRef, result.MessageID)))
-			})
+			return writeMutationResult(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), s.mutationReceipt(fmt.Sprintf("reacted %s #%d", result.PeerRef, result.MessageID)))
 		},
 	}
 	cmd.Flags().StringVar(&emoji, "emoji", "", "reaction emoji")
@@ -656,9 +650,7 @@ func editCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
-				return w.Print(s.mutationReceipt(fmt.Sprintf("edited %s #%d", result.PeerRef, result.MessageID)))
-			})
+			return writeMutationResult(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), s.mutationReceipt(fmt.Sprintf("edited %s #%d", result.PeerRef, result.MessageID)))
 		},
 	}
 	cmd.Flags().StringVar(&text, "text", "", "new message text")
@@ -700,9 +692,7 @@ func deleteCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
-				return w.Print(s.mutationReceipt(fmt.Sprintf("deleted %s #%d", result.PeerRef, result.MessageID)))
-			})
+			return writeMutationResult(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), s.mutationReceipt(fmt.Sprintf("deleted %s #%d", result.PeerRef, result.MessageID)))
 		},
 	}
 	cmd.Flags().BoolVar(&forMe, "for-me", false, "delete only for the current account where Telegram supports it")
@@ -1016,6 +1006,16 @@ func writeValueWithMeta(s *appState, value any, meta output.Meta, human func(out
 	return human(w)
 }
 
+func writeMutationResult(s *appState, result tgapp.MutationResult, meta output.Meta, receipt string) error {
+	err := writeValueWithMeta(s, result, meta, func(w output.Writer) error {
+		return w.Print(receipt)
+	})
+	if err != nil {
+		return tgapp.ConfirmedMutationOutputError(result, err)
+	}
+	return nil
+}
+
 func writeMessages(s *appState, messages []tgapp.Message, meta output.Meta) error {
 	w := s.writer()
 	if w.Format == output.JSON {
@@ -1231,7 +1231,7 @@ func (s *appState) requireWritable(action string) error {
 }
 
 func (s *appState) mutationReceipt(receipt string) string {
-	return fmt.Sprintf("[profile %s] %s", s.profileName(), receipt)
+	return fmt.Sprintf("[profile %s] confirmed: %s", s.profileName(), receipt)
 }
 
 func parseTimeFilter(value string, now time.Time) (time.Time, error) {

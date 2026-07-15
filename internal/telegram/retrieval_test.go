@@ -121,6 +121,20 @@ func TestReadPagesCursorStableAcrossEqualTimestamps(t *testing.T) {
 	}
 }
 
+func TestReadPagesCursorIgnoresNewArrivalsWithoutGap(t *testing.T) {
+	first, err := readPages(context.Background(), &tg.InputPeerUser{}, "user:1", ReadOptions{Limit: 50}, fakeHistory(100, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := readPages(context.Background(), &tg.InputPeerUser{}, "user:1", ReadOptions{Limit: 50, Cursor: first.Receipt.NextCursor}, fakeHistory(110, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Items[49].ID != 51 || second.Items[0].ID != 50 || second.Items[49].ID != 1 {
+		t.Fatalf("new arrivals shifted cursor: first last %d, second first/last %d/%d", first.Items[49].ID, second.Items[0].ID, second.Items[49].ID)
+	}
+}
+
 func TestReadPagesAcceptsDeletedCursorAnchor(t *testing.T) {
 	opts := ReadOptions{Limit: 10}
 	scope := readScope("user:1", opts)

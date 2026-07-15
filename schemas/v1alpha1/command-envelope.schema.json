@@ -1,0 +1,371 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ardasevinc/tele/schemas/v1alpha1/command-envelope.schema.json",
+  "title": "tele v1alpha1 command JSON envelopes",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/auth-status-command" },
+            "data": { "$ref": "#/$defs/auth-status" }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/auth-start-command" },
+            "data": { "$ref": "#/$defs/auth-start" }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/logout-command" },
+            "data": { "$ref": "#/$defs/logout" }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/me-command" },
+            "data": { "$ref": "#/$defs/account" }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/chat-list-command" },
+            "data": { "type": "array", "items": { "$ref": "#/$defs/chat" } }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/message-list-command" },
+            "data": { "type": "array", "items": { "$ref": "#/$defs/message" } }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/media-command" },
+            "data": { "$ref": "#/$defs/media-download" }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/mutation-command" },
+            "data": { "oneOf": [{ "$ref": "#/$defs/mutation-result" }, { "$ref": "#/$defs/mutation-preview" }] }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/config-path-command" },
+            "data": { "$ref": "#/$defs/config-path" }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/config-get-command" },
+            "data": {
+              "oneOf": [
+                { "$ref": "#/$defs/config" },
+                { "$ref": "#/$defs/api-id" },
+                { "$ref": "#/$defs/default-profile" }
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/config-set-command" },
+            "data": { "$ref": "#/$defs/ok" }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/profiles-list-command" },
+            "data": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/profile-selection-command" },
+            "data": { "$ref": "#/$defs/default-profile" }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/profile-current-command" },
+            "data": { "$ref": "#/$defs/profile" }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/doctor-command" },
+            "data": { "$ref": "#/$defs/doctor" }
+          }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "command-meta": {
+      "type": "object",
+      "required": ["command"],
+      "properties": { "command": { "type": "string" } }
+    },
+    "auth-status-command": {
+      "allOf": [
+        { "$ref": "#/$defs/command-meta" },
+        { "properties": { "command": { "enum": ["tele auth complete", "tele auth login", "tele auth status"] } } }
+      ]
+    },
+    "auth-start-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele auth start" } } }]
+    },
+    "logout-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele auth logout" } } }]
+    },
+    "me-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele me" } } }]
+    },
+    "chat-list-command": {
+      "allOf": [
+        { "$ref": "#/$defs/command-meta" },
+        { "properties": { "command": { "enum": ["tele chats", "tele inbox", "tele inbox mentions", "tele inbox unread", "tele mentions", "tele unread"] } } }
+      ]
+    },
+    "message-list-command": {
+      "allOf": [
+        { "$ref": "#/$defs/command-meta" },
+        { "properties": { "command": { "enum": ["tele export", "tele read", "tele search"] } } }
+      ]
+    },
+    "media-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele media download" } } }]
+    },
+    "mutation-command": {
+      "allOf": [
+        { "$ref": "#/$defs/command-meta" },
+        { "properties": { "command": { "enum": ["tele delete", "tele edit", "tele react", "tele reply", "tele send"] } } }
+      ]
+    },
+    "config-path-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele config path" } } }]
+    },
+    "config-get-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele config get" } } }]
+    },
+    "config-set-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele config set" } } }]
+    },
+    "profiles-list-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele profiles list" } } }]
+    },
+    "profile-selection-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele profiles use" } } }]
+    },
+    "profile-current-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele profiles current" } } }]
+    },
+    "doctor-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele doctor" } } }]
+    },
+    "account": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "integer" },
+        "username": { "type": "string" },
+        "first_name": { "type": "string" },
+        "last_name": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "auth-status": {
+      "type": "object",
+      "required": ["profile", "authorized"],
+      "properties": {
+        "profile": { "type": "string" },
+        "authorized": { "type": "boolean" },
+        "account": { "$ref": "#/$defs/account" }
+      },
+      "additionalProperties": false
+    },
+    "auth-start": {
+      "type": "object",
+      "required": ["profile", "code_sent"],
+      "properties": {
+        "profile": { "type": "string" },
+        "code_sent": { "type": "boolean" },
+        "code_type": { "type": "string" },
+        "timeout_seconds": { "type": "integer", "minimum": 0 },
+        "already_authorized": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "logout": {
+      "type": "object",
+      "required": ["logged_out"],
+      "properties": { "logged_out": { "const": true } },
+      "additionalProperties": false
+    },
+    "chat": {
+      "type": "object",
+      "required": ["ref", "kind", "id", "title", "unread_count"],
+      "properties": {
+        "ref": { "type": "string" },
+        "kind": { "enum": ["user", "chat", "channel", "supergroup"] },
+        "id": { "type": "integer" },
+        "title": { "type": "string" },
+        "username": { "type": "string" },
+        "unread_count": { "type": "integer", "minimum": 0 },
+        "unread_mentions_count": { "type": "integer", "minimum": 0 },
+        "top_message_id": { "type": "integer", "minimum": 1 },
+        "last_message_date": { "type": "string", "format": "date-time" },
+        "last_message_preview": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "entity": {
+      "type": "object",
+      "required": ["type", "offset", "length"],
+      "properties": {
+        "type": { "type": "string" },
+        "offset": { "type": "integer", "minimum": 0 },
+        "length": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "message": {
+      "type": "object",
+      "required": ["id", "outgoing"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "date": { "type": "string", "format": "date-time" },
+        "text": { "type": "string" },
+        "outgoing": { "type": "boolean" },
+        "post": { "type": "boolean" },
+        "media": { "type": "string" },
+        "service": { "type": "string" },
+        "source_peer_ref": { "type": "string" },
+        "source_peer_label": { "type": "string" },
+        "sender_peer_ref": { "type": "string" },
+        "sender_label": { "type": "string" },
+        "reply_to_message_id": { "type": "integer", "minimum": 1 },
+        "thread_id": { "type": "integer", "minimum": 1 },
+        "forum_topic": { "type": "boolean" },
+        "forwarded_from_peer_ref": { "type": "string" },
+        "forwarded_from_label": { "type": "string" },
+        "forwarded_date": { "type": "string", "format": "date-time" },
+        "edit_date": { "type": "string", "format": "date-time" },
+        "grouped_id": { "type": "integer" },
+        "entities": { "type": "array", "items": { "$ref": "#/$defs/entity" } }
+      },
+      "additionalProperties": false
+    },
+    "media-download": {
+      "type": "object",
+      "required": ["ok", "peer_ref", "message_id", "path", "bytes", "media_type", "file_name", "downloaded_at"],
+      "properties": {
+        "ok": { "const": true },
+        "peer_ref": { "type": "string" },
+        "message_id": { "type": "integer", "minimum": 1 },
+        "path": { "type": "string" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "media_type": { "type": "string" },
+        "mime_type": { "type": "string" },
+        "file_name": { "type": "string" },
+        "storage_type": { "type": "string" },
+        "downloaded_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "mutation-result": {
+      "type": "object",
+      "required": ["ok", "outcome", "retry_safe", "action", "peer_ref", "reconciliation_handle", "timestamp"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "outcome": { "enum": ["confirmed", "rejected", "outcome_unknown"] },
+        "retry_safe": { "type": "boolean" },
+        "action": { "enum": ["delete", "edit", "react", "reply", "send"] },
+        "peer_ref": { "type": "string" },
+        "message_id": { "type": "integer", "minimum": 1 },
+        "message_ids": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+        "reconciliation_handle": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "mutation-preview": {
+      "type": "object",
+      "required": ["ok", "dry_run", "action", "peer_ref", "timestamp"],
+      "properties": {
+        "ok": { "const": true },
+        "dry_run": { "const": true },
+        "action": { "enum": ["delete", "edit", "react", "reply", "send"] },
+        "peer_ref": { "type": "string" },
+        "message_id": { "type": "integer", "minimum": 1 },
+        "scope": { "enum": ["for_me", "revoke"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "config-path": {
+      "type": "object",
+      "required": ["config"],
+      "properties": { "config": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "profile-config": {
+      "type": "object",
+      "properties": { "api_id": { "type": "integer", "minimum": 1 } },
+      "additionalProperties": false
+    },
+    "config": {
+      "type": "object",
+      "required": ["default_limit", "default_profile", "profiles"],
+      "properties": {
+        "default_limit": { "type": "integer", "minimum": 0 },
+        "default_profile": { "type": "string" },
+        "profiles": { "type": "object", "additionalProperties": { "$ref": "#/$defs/profile-config" } }
+      },
+      "additionalProperties": false
+    },
+    "api-id": {
+      "type": "object",
+      "required": ["api_id"],
+      "properties": { "api_id": { "type": "integer", "minimum": 1 } },
+      "additionalProperties": false
+    },
+    "default-profile": {
+      "type": "object",
+      "required": ["default_profile"],
+      "properties": { "default_profile": { "type": "string", "minLength": 1 } },
+      "additionalProperties": false
+    },
+    "profile": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": { "profile": { "type": "string", "minLength": 1 } },
+      "additionalProperties": false
+    },
+    "ok": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": { "ok": { "const": true } },
+      "additionalProperties": false
+    },
+    "doctor": {
+      "type": "object",
+      "required": ["version", "profile", "config", "data", "config_mode_ok", "keychain"],
+      "properties": {
+        "version": { "type": "string" },
+        "profile": { "type": "string" },
+        "config": { "type": "string" },
+        "data": { "type": "string" },
+        "config_mode_ok": { "type": "boolean" },
+        "config_mode_error": { "type": "string" },
+        "keychain": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

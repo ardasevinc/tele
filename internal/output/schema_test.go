@@ -54,7 +54,7 @@ func compilePublicSchemas(t *testing.T) map[string]*jsonschema.Schema {
 	t.Helper()
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
-	for _, name := range []string{"envelope.schema.json", "error.schema.json", "record.schema.json"} {
+	for _, name := range []string{"envelope.schema.json", "error.schema.json", "record.schema.json", "command-envelope.schema.json"} {
 		path := filepath.Join("..", "..", "schemas", "v1alpha1", name)
 		b, err := os.ReadFile(path)
 		if err != nil {
@@ -68,8 +68,8 @@ func compilePublicSchemas(t *testing.T) map[string]*jsonschema.Schema {
 			t.Fatalf("add schema %s: %v", name, err)
 		}
 	}
-	compiled := make(map[string]*jsonschema.Schema, 3)
-	for _, name := range []string{"envelope.schema.json", "error.schema.json", "record.schema.json"} {
+	compiled := make(map[string]*jsonschema.Schema, 4)
+	for _, name := range []string{"envelope.schema.json", "error.schema.json", "record.schema.json", "command-envelope.schema.json"} {
 		schema, err := compiler.Compile(schemaBase + name)
 		if err != nil {
 			t.Fatalf("compile schema %s: %v", name, err)

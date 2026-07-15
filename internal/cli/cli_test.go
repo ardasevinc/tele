@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,8 @@ import (
 	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/output"
 	tgapp "github.com/ardasevinc/tele/internal/telegram"
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/spf13/cobra"
 )
 
 type failingWriter struct{}
@@ -103,6 +107,184 @@ func TestJSONAndJSONLAreMutuallyExclusive(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("execute error = %v", err)
 	}
+}
+
+func TestOutputFormatSelectionMatrix(t *testing.T) {
+	tests := []struct {
+		name          string
+		state         appState
+		defaultFormat output.Format
+		want          output.Format
+	}{
+		{name: "human default", defaultFormat: output.Human, want: output.Human},
+		{name: "jsonl command default", defaultFormat: output.JSONL, want: output.JSONL},
+		{name: "json overrides human", state: appState{json: true}, defaultFormat: output.Human, want: output.JSON},
+		{name: "json overrides jsonl command", state: appState{json: true}, defaultFormat: output.JSONL, want: output.JSON},
+		{name: "jsonl overrides human", state: appState{jsonl: true}, defaultFormat: output.Human, want: output.JSONL},
+		{name: "quiet does not select format", state: appState{quiet: true}, defaultFormat: output.Human, want: output.Human},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.state.writerWithDefault(tt.defaultFormat).Format; got != tt.want {
+				t.Fatalf("format = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExecuteSeparatesMachineAndHumanErrors(t *testing.T) {
+	for _, format := range []string{"--json", "--jsonl"} {
+		t.Run(strings.TrimPrefix(format, "--"), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			state := &appState{in: strings.NewReader(""), out: &stdout, err: &stderr}
+			err := executeWithState(context.Background(), []string{format, "--wat"}, state)
+			if ExitCode(err) != output.ExitInvalidInput {
+				t.Fatalf("exit = %d, want %d", ExitCode(err), output.ExitInvalidInput)
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("machine error wrote stderr: %q", stderr.String())
+			}
+			var value map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &value); err != nil {
+				t.Fatal(err)
+			}
+			if format == "--jsonl" {
+				lines := bytes.Split(bytes.TrimSpace(stdout.Bytes()), []byte("\n"))
+				if len(lines) != 1 || value["type"] != "error" {
+					t.Fatalf("JSONL error contract: lines=%d type=%v", len(lines), value["type"])
+				}
+			}
+		})
+	}
+
+	var stdout, stderr bytes.Buffer
+	state := &appState{in: strings.NewReader(""), out: &stdout, err: &stderr}
+	err := executeWithState(context.Background(), []string{"--wat"}, state)
+	if ExitCode(err) != output.ExitInvalidInput || stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "error: ") {
+		t.Fatalf("human error contract: exit=%d stdout=%q stderr=%q", ExitCode(err), stdout.String(), stderr.String())
+	}
+}
+
+func TestExecuteClassifiesBrokenStdout(t *testing.T) {
+	state := &appState{in: strings.NewReader(""), out: failingWriter{}, err: &bytes.Buffer{}}
+	err := executeWithState(context.Background(), []string{"--json", "config", "path"}, state)
+	if got := ExitCode(err); got != output.ExitLocalIO {
+		t.Fatalf("broken stdout exit = %d, want %d: %v", got, output.ExitLocalIO, err)
+	}
+}
+
+func TestEveryPublicCommandHasAValidCanonicalGolden(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "golden", "commands.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var goldens map[string]json.RawMessage
+	if err := json.Unmarshal(b, &goldens); err != nil {
+		t.Fatal(err)
+	}
+
+	state := &appState{in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{}}
+	root := rootCommand(context.Background(), state)
+	gotCommands := runnableCommandPaths(root)
+	wantCommands := make([]string, 0, len(goldens))
+	for command := range goldens {
+		wantCommands = append(wantCommands, command)
+	}
+	sort.Strings(wantCommands)
+	if strings.Join(gotCommands, "\n") != strings.Join(wantCommands, "\n") {
+		t.Fatalf("public command/golden drift:\ncommands:\n%s\n\ngoldens:\n%s", strings.Join(gotCommands, "\n"), strings.Join(wantCommands, "\n"))
+	}
+
+	schema := compileCommandEnvelopeSchema(t)
+	for _, command := range gotCommands {
+		t.Run(strings.TrimPrefix(command, "tele "), func(t *testing.T) {
+			var data any
+			if err := json.Unmarshal(goldens[command], &data); err != nil {
+				t.Fatal(err)
+			}
+			envelope := output.NewEnvelope(output.Meta{
+				Command:     command,
+				TeleVersion: "0.1.0-alpha.6",
+				Profile:     "main",
+				FetchedAt:   "2026-07-15T12:00:00Z",
+			}, data)
+			encoded, err := json.Marshal(envelope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var value any
+			if err := json.Unmarshal(encoded, &value); err != nil {
+				t.Fatal(err)
+			}
+			if err := schema.Validate(value); err != nil {
+				t.Fatalf("canonical output does not satisfy command schema: %v\n%s", err, encoded)
+			}
+		})
+	}
+}
+
+func TestCommandSchemaRejectsUnknownCommandsAndPrivateAuthFields(t *testing.T) {
+	schema := compileCommandEnvelopeSchema(t)
+	tests := []output.Envelope{
+		output.NewEnvelope(output.Meta{Command: "tele unknown", TeleVersion: "test", Profile: "main", FetchedAt: "2026-07-15T12:00:00Z"}, map[string]any{"ok": true}),
+		output.NewEnvelope(output.Meta{Command: "tele auth status", TeleVersion: "test", Profile: "main", FetchedAt: "2026-07-15T12:00:00Z"}, map[string]any{
+			"profile": "main", "authorized": true, "account": map[string]any{"id": 42, "phone": "+905555555555"},
+		}),
+	}
+	for _, envelope := range tests {
+		b, err := json.Marshal(envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var value any
+		if err := json.Unmarshal(b, &value); err != nil {
+			t.Fatal(err)
+		}
+		if err := schema.Validate(value); err == nil {
+			t.Fatalf("command schema accepted invalid envelope: %s", b)
+		}
+	}
+}
+
+func runnableCommandPaths(root *cobra.Command) []string {
+	var paths []string
+	var walk func(*cobra.Command)
+	walk = func(command *cobra.Command) {
+		if command != root && !command.Hidden && (command.Run != nil || command.RunE != nil) {
+			paths = append(paths, command.CommandPath())
+		}
+		for _, child := range command.Commands() {
+			walk(child)
+		}
+	}
+	walk(root)
+	sort.Strings(paths)
+	return paths
+}
+
+func compileCommandEnvelopeSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
+	const base = "https://github.com/ardasevinc/tele/schemas/v1alpha1/"
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	for _, name := range []string{"envelope.schema.json", "command-envelope.schema.json"} {
+		b, err := os.ReadFile(filepath.Join("..", "..", "schemas", "v1alpha1", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document any
+		if err := json.Unmarshal(b, &document); err != nil {
+			t.Fatal(err)
+		}
+		if err := compiler.AddResource(base+name, document); err != nil {
+			t.Fatal(err)
+		}
+	}
+	schema, err := compiler.Compile(base + "command-envelope.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return schema
 }
 
 func TestPublicConfigOmitsPhone(t *testing.T) {

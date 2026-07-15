@@ -62,11 +62,18 @@ type appState struct {
 
 func Execute(ctx context.Context, args []string) error {
 	state := &appState{in: os.Stdin, out: os.Stdout, err: os.Stderr, command: "tele"}
+	return executeWithState(ctx, args, state)
+}
+
+func executeWithState(ctx context.Context, args []string, state *appState) error {
+	if state.command == "" {
+		state.command = "tele"
+	}
 	cmd := rootCommand(ctx, state)
 	cmd.SetArgs(args)
-	cmd.SetIn(os.Stdin)
-	cmd.SetOut(os.Stdout)
-	cmd.SetErr(os.Stderr)
+	cmd.SetIn(state.in)
+	cmd.SetOut(state.out)
+	cmd.SetErr(state.err)
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		w := state.writer()
 		response := output.ErrorFrom(err)
@@ -91,6 +98,9 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       buildinfo.Version + " (" + buildinfo.Commit + ")",
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			s.command = cmd.CommandPath()
 			if s.json && s.jsonl {

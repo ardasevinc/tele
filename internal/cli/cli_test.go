@@ -63,6 +63,14 @@ func TestParseTimeFilterDays(t *testing.T) {
 	}
 }
 
+func TestParseTimeFilterRejectsNonPositiveDuration(t *testing.T) {
+	for _, value := range []string{"0s", "-2h"} {
+		if _, err := parseTimeFilter(value, time.Now()); err == nil {
+			t.Fatalf("parseTimeFilter accepted %q", value)
+		}
+	}
+}
+
 func TestParsePositiveInt(t *testing.T) {
 	if got, err := parsePositiveInt("123", "msg-id"); err != nil || got != 123 {
 		t.Fatalf("parsePositiveInt = %d, %v; want 123, nil", got, err)

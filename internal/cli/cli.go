@@ -1214,6 +1214,9 @@ func parseTimeFilter(value string, now time.Time) (time.Time, error) {
 		return now.Add(-time.Duration(days) * 24 * time.Hour), nil
 	}
 	if d, err := time.ParseDuration(value); err == nil {
+		if d <= 0 {
+			return time.Time{}, fmt.Errorf("time duration %q must be positive", value)
+		}
 		return now.Add(-d), nil
 	}
 	if t, err := time.Parse(time.RFC3339, value); err == nil {

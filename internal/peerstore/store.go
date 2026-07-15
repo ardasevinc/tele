@@ -93,7 +93,7 @@ func (s Store) Resolve(token string) (tg.InputPeerClass, Peer, error) {
 	if err != nil {
 		return nil, Peer{}, err
 	}
-	token = strings.TrimPrefix(strings.TrimSpace(token), "@")
+	token = normalizeToken(token)
 	for _, p := range cache.Peers {
 		if p.Ref == token || strings.EqualFold(p.Username, token) || strings.EqualFold(p.Title, token) {
 			input, err := p.Input()
@@ -101,6 +101,14 @@ func (s Store) Resolve(token string) (tg.InputPeerClass, Peer, error) {
 		}
 	}
 	return nil, Peer{}, fmt.Errorf("peer %q not in cache; run tele chats first or use a username", token)
+}
+
+func normalizeToken(token string) string {
+	token = strings.TrimSpace(token)
+	for strings.HasPrefix(token, "@") {
+		token = strings.TrimSpace(strings.TrimPrefix(token, "@"))
+	}
+	return token
 }
 
 func FromUser(u *tg.User) (Peer, bool) {

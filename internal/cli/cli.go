@@ -54,6 +54,7 @@ type appState struct {
 	readOnly bool
 	dryRun   bool
 	command  string
+	wait     time.Duration
 
 	in  io.Reader
 	out io.Writer
@@ -106,7 +107,7 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 			if s.json && s.jsonl {
 				return fmt.Errorf("--json and --jsonl are mutually exclusive")
 			}
-			return nil
+			return tgapp.ValidateFloodWaitLimit(s.wait)
 		},
 	}
 	cmd.PersistentFlags().StringVar(&s.cfgPath, "config", "", "config file path")
@@ -117,6 +118,8 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&s.verbose, "verbose", false, "write verbose diagnostics")
 	cmd.PersistentFlags().BoolVar(&s.readOnly, "read-only", false, "reject Telegram message mutations")
 	cmd.PersistentFlags().BoolVar(&s.dryRun, "dry-run", false, "resolve and validate message mutations without dispatching them")
+	cmd.PersistentFlags().DurationVar(&s.wait, "wait", 0, "wait and retry flood limits within this total budget (max 5m)")
+	cmd.PersistentFlags().Lookup("wait").NoOptDefVal = tgapp.DefaultFloodWaitLimit.String()
 	commands := []*cobra.Command{authCommand(s), meCommand(s), chatsCommand(s), readCommand(s), searchCommand(s), exportCommand(s), inboxCommand(s), mediaCommand(s)}
 	commands = append(commands, mutationCommands(s)...)
 	cmd.AddCommand(commands...)
@@ -1028,13 +1031,14 @@ func (s *appState) telegramApp() (tgapp.App, error) {
 		paths.Config = s.cfgPath
 	}
 	return tgapp.App{
-		Config:  cfg,
-		Profile: profileName,
-		Paths:   paths,
-		Secrets: secrets.NewStore(),
-		In:      s.in,
-		Out:     s.out,
-		Err:     s.err,
+		Config:         cfg,
+		Profile:        profileName,
+		Paths:          paths,
+		Secrets:        secrets.NewStore(),
+		FloodWaitLimit: s.wait,
+		In:             s.in,
+		Out:            s.out,
+		Err:            s.err,
 	}, nil
 }
 

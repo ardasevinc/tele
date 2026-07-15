@@ -40,13 +40,14 @@ var (
 )
 
 type App struct {
-	Config  config.Config
-	Profile string
-	Paths   config.Paths
-	Secrets secrets.Store
-	In      io.Reader
-	Out     io.Writer
-	Err     io.Writer
+	Config         config.Config
+	Profile        string
+	Paths          config.Paths
+	Secrets        secrets.Store
+	FloodWaitLimit time.Duration
+	In             io.Reader
+	Out            io.Writer
+	Err            io.Writer
 }
 
 type Account struct {
@@ -168,8 +169,9 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 			SystemLangCode: "en",
 			LangCode:       "en",
 		},
+		Middlewares: floodWaitMiddlewares(a.FloodWaitLimit),
 	})
-	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second+a.FloodWaitLimit)
 	defer cancel()
 	called := false
 	var callbackErr error
@@ -187,6 +189,13 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 		return fmt.Errorf("telegram client closed before ready")
 	}
 	return nil
+}
+
+func floodWaitMiddlewares(limit time.Duration) []telegram.Middleware {
+	if limit <= 0 {
+		return nil
+	}
+	return []telegram.Middleware{floodWaitMiddleware(limit)}
 }
 
 func (a App) Login(ctx context.Context, opts LoginOptions) (AuthStatus, error) {

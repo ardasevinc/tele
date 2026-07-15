@@ -78,6 +78,36 @@ func TestReadOnlyAllowsDryRun(t *testing.T) {
 	}
 }
 
+func TestWaitFlagUsesBoundedExplicitBudget(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want time.Duration
+	}{
+		{name: "bare", args: []string{"--wait", "config", "path"}, want: tgapp.DefaultFloodWaitLimit},
+		{name: "duration", args: []string{"--wait=2m", "config", "path"}, want: 2 * time.Minute},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			state := &appState{in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{}}
+			cmd := rootCommand(context.Background(), state)
+			cmd.SetArgs(tt.args)
+			if err := cmd.ExecuteContext(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if state.wait != tt.want {
+				t.Fatalf("wait = %s, want %s", state.wait, tt.want)
+			}
+		})
+	}
+
+	state := &appState{in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{}}
+	cmd := rootCommand(context.Background(), state)
+	cmd.SetArgs([]string{"--wait=6m", "config", "path"})
+	if err := cmd.ExecuteContext(context.Background()); err == nil || !strings.Contains(err.Error(), "at most 5m") {
+		t.Fatalf("over-limit wait error = %v", err)
+	}
+}
+
 func TestReadOnlyGuardsEveryMutationCommand(t *testing.T) {
 	tests := [][]string{
 		{"--read-only", "send", "user:1", "--text", "hello"},

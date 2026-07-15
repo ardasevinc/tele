@@ -89,10 +89,19 @@ jobs:
           for artifact in dist/*; do
             gh attestation verify "$artifact" --repo "$GITHUB_REPOSITORY"
           done
+      - name: Prepare authored release notes
+        id: notes
+        shell: bash
+        run: |
+          source="docs/releases/${{ steps.version.outputs.version }}.md"
+          target="$RUNNER_TEMP/release-notes.md"
+          if [[ -f "$source" ]]; then cp "$source" "$target"; else : > "$target"; fi
+          printf 'path=%s\n' "$target" >> "$GITHUB_OUTPUT"
       - name: Create complete draft release
         id: create_release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
+          body_path: ${{ steps.notes.outputs.path }}
           files: dist/*
           fail_on_unmatched_files: true
           generate_release_notes: true

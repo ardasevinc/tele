@@ -1,0 +1,28 @@
+{
+  "schema_version": "tele/v1alpha1",
+  "meta": {
+    "command": "tele chats",
+    "tele_version": "0.1.0-alpha.6",
+    "profile": "main",
+    "account_id": 42,
+    "fetched_at": "2026-07-15T12:00:00Z",
+    "limit": 2,
+    "retrieval": {
+      "requested_count": 2,
+      "returned_count": 1,
+      "complete": true,
+      "truncated": false,
+      "server_total": 1,
+      "pages": 1
+    }
+  },
+  "data": [
+    {
+      "ref": "user:10",
+      "kind": "user",
+      "id": 10,
+      "title": "Alice",
+      "unread_count": 0
+    }
+  ]
+}

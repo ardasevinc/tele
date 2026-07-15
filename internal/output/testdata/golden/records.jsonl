@@ -1,0 +1,2 @@
+{"schema_version":"tele/v1alpha1","type":"meta","meta":{"command":"tele read","tele_version":"0.1.0-alpha.6","profile":"main","account_id":42,"peer_ref":"user:10","fetched_at":"2026-07-15T12:00:00Z","limit":1,"retrieval":{"requested_count":1,"returned_count":1,"complete":true,"truncated":false,"pages":1}}}
+{"schema_version":"tele/v1alpha1","type":"data","data":{"id":7,"date":"2026-07-15T11:59:00Z","text":"hello","outgoing":false,"source_peer_ref":"user:10","source_peer_label":"Alice","sender_peer_ref":"user:10","sender_label":"Alice"}}

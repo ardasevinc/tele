@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ardasevinc/tele/schemas/v1alpha1/envelope.schema.json",
+  "title": "tele v1alpha1 JSON envelope",
+  "type": "object",
+  "required": ["schema_version", "meta", "data"],
+  "properties": {
+    "schema_version": { "const": "tele/v1alpha1" },
+    "meta": { "$ref": "#/$defs/meta" },
+    "data": true
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "meta": {
+      "type": "object",
+      "required": ["command", "tele_version", "profile", "fetched_at"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "tele_version": { "type": "string", "minLength": 1 },
+        "profile": { "type": "string" },
+        "account_id": { "type": "integer" },
+        "peer_ref": { "type": "string" },
+        "fetched_at": { "type": "string", "format": "date-time" },
+        "limit": { "type": "integer", "minimum": 1 },
+        "side_effects": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "retrieval": { "$ref": "#/$defs/retrieval" }
+      },
+      "additionalProperties": false
+    },
+    "retrieval": {
+      "type": "object",
+      "required": ["requested_count", "returned_count", "complete", "truncated", "pages"],
+      "properties": {
+        "requested_count": { "type": "integer", "minimum": 0 },
+        "returned_count": { "type": "integer", "minimum": 0 },
+        "complete": { "type": ["boolean", "null"] },
+        "truncated": { "type": "boolean" },
+        "next_cursor": { "type": "string" },
+        "input_cursor": { "type": "string" },
+        "server_total": { "type": "integer", "minimum": 0 },
+        "pages": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

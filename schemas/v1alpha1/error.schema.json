@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ardasevinc/tele/schemas/v1alpha1/error.schema.json",
+  "title": "tele v1alpha1 JSON error",
+  "type": "object",
+  "required": ["schema_version", "meta", "error"],
+  "properties": {
+    "schema_version": { "const": "tele/v1alpha1" },
+    "meta": { "$ref": "envelope.schema.json#/$defs/meta" },
+    "error": { "$ref": "#/$defs/error" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "exit_code"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "exit_code": { "type": "integer", "minimum": 1, "maximum": 255 },
+        "outcome": { "enum": ["confirmed", "rejected", "outcome_unknown"] },
+        "retry_safe": { "type": "boolean" },
+        "reconciliation_handle": { "type": "string" },
+        "guidance": { "type": "string" },
+        "retry_after_seconds": { "type": "integer", "minimum": 1 },
+        "telegram_code": { "type": "integer" },
+        "telegram_type": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

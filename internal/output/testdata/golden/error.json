@@ -1,0 +1,17 @@
+{
+  "schema_version": "tele/v1alpha1",
+  "meta": {
+    "command": "tele search",
+    "tele_version": "0.1.0-alpha.6",
+    "profile": "main",
+    "fetched_at": "2026-07-15T12:00:00Z"
+  },
+  "error": {
+    "code": "telegram_flood_wait",
+    "message": "FLOOD_WAIT_42",
+    "exit_code": 5,
+    "retry_after_seconds": 42,
+    "telegram_code": 420,
+    "telegram_type": "FLOOD_WAIT"
+  }
+}

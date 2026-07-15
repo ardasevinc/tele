@@ -24,10 +24,7 @@ func acquireLock(ctx context.Context, path string) (func() error, error) {
 			return func() error {
 				unlockErr := windows.UnlockFileEx(handle, 0, 1, 0, &overlapped)
 				closeErr := file.Close()
-				if unlockErr != nil {
-					return unlockErr
-				}
-				return closeErr
+				return errors.Join(unlockErr, closeErr)
 			}, nil
 		}
 		if !errors.Is(err, windows.ERROR_LOCK_VIOLATION) {

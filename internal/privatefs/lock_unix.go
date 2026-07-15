@@ -25,10 +25,7 @@ func acquireLock(ctx context.Context, path string) (func() error, error) {
 			return func() error {
 				unlockErr := syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 				closeErr := file.Close()
-				if unlockErr != nil {
-					return unlockErr
-				}
-				return closeErr
+				return errors.Join(unlockErr, closeErr)
 			}, nil
 		}
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {

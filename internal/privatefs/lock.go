@@ -2,6 +2,7 @@ package privatefs
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 )
@@ -12,7 +13,7 @@ type processLock struct {
 	token chan struct{}
 }
 
-func WithLock(ctx context.Context, path string, fn func() error) error {
+func WithLock(ctx context.Context, path string, fn func() error) (retErr error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return err
@@ -31,7 +32,7 @@ func WithLock(ctx context.Context, path string, fn func() error) error {
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer func() { retErr = errors.Join(retErr, release()) }()
 	return fn()
 }
 

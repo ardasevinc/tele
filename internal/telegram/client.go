@@ -34,6 +34,12 @@ import (
 
 const apiHashKey = "api-hash"
 const authPendingKey = "auth-pending"
+const pendingAuthTTL = 15 * time.Minute
+
+var (
+	ErrPendingAuthExpired = errors.New("pending auth expired")
+	ErrPendingAuthInvalid = errors.New("pending auth state is invalid")
+)
 
 var (
 	loginCodeLineRE = regexp.MustCompile(`(?i)(login code:\s*)[A-Za-z0-9_-]+`)
@@ -134,12 +140,14 @@ func (a App) SetAPIHash(ctx context.Context, hash string) error {
 	return a.Secrets.Set(ctx, a.Profile, apiHashKey, []byte(strings.TrimSpace(hash)))
 }
 
-func (a App) DeleteAuth(ctx context.Context) error {
-	return telesession.KeychainStorage{
+func (a App) ResetLocalAuth(ctx context.Context) error {
+	sessionErr := telesession.KeychainStorage{
 		Profile: a.Profile,
 		Store:   a.Secrets,
 		Path:    a.sessionPath(),
 	}.Delete(ctx)
+	pendingErr := a.Secrets.Delete(ctx, a.Profile, authPendingKey)
+	return errors.Join(sessionErr, pendingErr)
 }
 
 func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.Client) error) error {
@@ -213,8 +221,13 @@ func (a App) Login(ctx context.Context, opts LoginOptions) (AuthStatus, error) {
 		if err := flow.Run(ctx, c.Auth()); err != nil {
 			return err
 		}
+		self, err := c.Self(ctx)
+		if err != nil {
+			return err
+		}
 		status.Authorized = true
-		return nil
+		status.Account = userToAccount(self)
+		return a.Secrets.Delete(ctx, a.Profile, authPendingKey)
 	})
 	return status, err
 }
@@ -232,7 +245,7 @@ func (a App) AuthStart(ctx context.Context, phone string) (AuthStartStatus, erro
 		}
 		if authStatus != nil && authStatus.Authorized {
 			status.AlreadyAuthorized = true
-			return nil
+			return a.Secrets.Delete(ctx, a.Profile, authPendingKey)
 		}
 		sent, err := c.Auth().SendCode(ctx, phone, auth.SendCodeOptions{})
 		if err != nil {
@@ -313,7 +326,7 @@ func (a App) Status(ctx context.Context) (AuthStatus, error) {
 	return status, err
 }
 
-func (a App) Logout(ctx context.Context) error {
+func (a App) LogoutRemote(ctx context.Context) error {
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
 		_, err := c.API().AuthLogOut(ctx)
 		return err
@@ -321,7 +334,7 @@ func (a App) Logout(ctx context.Context) error {
 	if err != nil && !auth.IsUnauthorized(err) {
 		return err
 	}
-	return a.DeleteAuth(ctx)
+	return a.Secrets.Delete(ctx, a.Profile, authPendingKey)
 }
 
 type Chat struct {
@@ -779,15 +792,36 @@ func (a App) send(ctx context.Context, peerToken, text string, replyTo int, acti
 }
 
 func (a App) pendingAuth(ctx context.Context) (authPending, error) {
-	var pending authPending
 	b, err := a.Secrets.Get(ctx, a.Profile, authPendingKey)
 	if errors.Is(err, secrets.ErrNotFound) {
-		return pending, fmt.Errorf("no pending auth; run tele auth start first")
+		return authPending{}, fmt.Errorf("no pending auth; run tele auth start first")
 	}
 	if err != nil {
-		return pending, err
+		return authPending{}, err
 	}
-	return pending, json.Unmarshal(b, &pending)
+	pending, err := parsePendingAuth(b, time.Now())
+	if err != nil {
+		if deleteErr := a.Secrets.Delete(ctx, a.Profile, authPendingKey); deleteErr != nil {
+			return authPending{}, errors.Join(err, deleteErr)
+		}
+		return authPending{}, err
+	}
+	return pending, nil
+}
+
+func parsePendingAuth(data []byte, now time.Time) (authPending, error) {
+	var pending authPending
+	if err := json.Unmarshal(data, &pending); err != nil {
+		return authPending{}, fmt.Errorf("%w; run tele auth start again", ErrPendingAuthInvalid)
+	}
+	createdAt, err := time.Parse(time.RFC3339, pending.CreatedAt)
+	if err != nil || strings.TrimSpace(pending.Phone) == "" || strings.TrimSpace(pending.PhoneCodeHash) == "" {
+		return authPending{}, fmt.Errorf("%w; run tele auth start again", ErrPendingAuthInvalid)
+	}
+	if now.After(createdAt.Add(pendingAuthTTL)) {
+		return authPending{}, fmt.Errorf("%w; run tele auth start again", ErrPendingAuthExpired)
+	}
+	return pending, nil
 }
 
 func (a App) savePendingAuth(ctx context.Context, pending authPending) error {

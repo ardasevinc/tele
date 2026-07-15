@@ -8,6 +8,8 @@ import (
 
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tgerr"
+
+	tgapp "github.com/ardasevinc/tele/internal/telegram"
 )
 
 type testMutationError struct {
@@ -122,6 +124,8 @@ func TestErrorFromAssignsStableExitFamilies(t *testing.T) {
 	}{
 		{name: "invalid input", err: errors.New("unknown flag: --wat"), code: "invalid_input", exit: ExitInvalidInput},
 		{name: "auth", err: errors.New("not authorized"), code: "not_authorized", exit: ExitAuthOrConfig},
+		{name: "expired pending auth", err: tgapp.ErrPendingAuthExpired, code: "pending_auth_expired", exit: ExitAuthOrConfig},
+		{name: "invalid pending auth", err: tgapp.ErrPendingAuthInvalid, code: "pending_auth_invalid", exit: ExitAuthOrConfig},
 		{name: "peer", err: errors.New("peer x not in cache"), code: "peer_not_found", exit: ExitNotFound},
 		{name: "telegram", err: tgerr.New(400, "USERNAME_NOT_OCCUPIED"), code: "telegram_username_not_occupied", exit: ExitTelegram},
 		{name: "output", err: errors.New("write stdout: broken pipe"), code: "output_failed", exit: ExitLocalIO},

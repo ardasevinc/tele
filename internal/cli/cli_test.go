@@ -139,6 +139,16 @@ func TestJSONAndJSONLAreMutuallyExclusive(t *testing.T) {
 	}
 }
 
+func TestLocalAuthResetRequiresExplicitConfirmation(t *testing.T) {
+	state := &appState{in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{}}
+	cmd := rootCommand(context.Background(), state)
+	cmd.SetArgs([]string{"auth", "reset-local"})
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "requires --yes") {
+		t.Fatalf("reset-local error = %v", err)
+	}
+}
+
 func TestOutputFormatSelectionMatrix(t *testing.T) {
 	tests := []struct {
 		name          string

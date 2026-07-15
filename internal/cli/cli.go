@@ -247,20 +247,44 @@ func authCommand(s *appState) *cobra.Command {
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:   "logout",
-		Short: "Log out and delete local session material",
+		Short: "Revoke the Telegram authorization",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app, err := s.telegramApp()
 			if err != nil {
 				return err
 			}
-			if err := app.Logout(cmd.Context()); err != nil {
+			if err := app.LogoutRemote(cmd.Context()); err != nil {
 				return err
 			}
-			return writeValue(s, map[string]any{"logged_out": true}, func(w output.Writer) error {
-				return w.Print("logged out")
+			return writeValue(s, map[string]any{"logged_out": true, "local_auth_deleted": false}, func(w output.Writer) error {
+				return w.Print("logged out; local auth material retained (use tele auth reset-local --yes to delete it)")
 			})
 		},
 	})
+	var confirmReset bool
+	resetLocal := &cobra.Command{
+		Use:   "reset-local",
+		Short: "Delete local session and pending auth material",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !confirmReset {
+				return fmt.Errorf("local auth reset requires --yes")
+			}
+			app, err := s.telegramApp()
+			if err != nil {
+				return err
+			}
+			if err := app.ResetLocalAuth(cmd.Context()); err != nil {
+				return err
+			}
+			return writeValue(s, map[string]any{"local_auth_deleted": true}, func(w output.Writer) error {
+				return w.Print("local auth material deleted")
+			})
+		},
+	}
+	resetLocal.Flags().BoolVar(&confirmReset, "yes", false, "confirm deletion of local auth material")
+	cmd.AddCommand(resetLocal)
 	return cmd
 }
 

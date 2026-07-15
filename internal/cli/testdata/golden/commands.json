@@ -1,7 +1,8 @@
 {
   "tele auth complete": {"profile":"main","authorized":true,"account":{"id":42,"username":"arda","first_name":"Arda"}},
   "tele auth login": {"profile":"main","authorized":true,"account":{"id":42,"username":"arda","first_name":"Arda"}},
-  "tele auth logout": {"logged_out":true},
+  "tele auth logout": {"logged_out":true,"local_auth_deleted":false},
+  "tele auth reset-local": {"local_auth_deleted":true},
   "tele auth start": {"profile":"main","code_sent":true,"code_type":"app","timeout_seconds":60},
   "tele auth status": {"profile":"main","authorized":true,"account":{"id":42,"username":"arda","first_name":"Arda"}},
   "tele chats": [{"ref":"user:10","kind":"user","id":10,"title":"Alice","unread_count":0}],

@@ -26,6 +26,12 @@
         },
         {
           "properties": {
+            "meta": { "$ref": "#/$defs/local-auth-reset-command" },
+            "data": { "$ref": "#/$defs/local-auth-reset" }
+          }
+        },
+        {
+          "properties": {
             "meta": { "$ref": "#/$defs/me-command" },
             "data": { "$ref": "#/$defs/account" }
           }
@@ -123,6 +129,9 @@
     "logout-command": {
       "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele auth logout" } } }]
     },
+    "local-auth-reset-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele auth reset-local" } } }]
+    },
     "me-command": {
       "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele me" } } }]
     },
@@ -203,8 +212,17 @@
     },
     "logout": {
       "type": "object",
-      "required": ["logged_out"],
-      "properties": { "logged_out": { "const": true } },
+      "required": ["logged_out", "local_auth_deleted"],
+      "properties": {
+        "logged_out": { "const": true },
+        "local_auth_deleted": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "local-auth-reset": {
+      "type": "object",
+      "required": ["local_auth_deleted"],
+      "properties": { "local_auth_deleted": { "const": true } },
       "additionalProperties": false
     },
     "chat": {

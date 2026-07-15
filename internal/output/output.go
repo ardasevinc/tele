@@ -10,6 +10,8 @@ import (
 
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tgerr"
+
+	tgapp "github.com/ardasevinc/tele/internal/telegram"
 )
 
 type Format string
@@ -201,6 +203,12 @@ func ErrorFrom(err error) ErrorResponse {
 	if errors.Is(err, auth.ErrPasswordAuthNeeded) || errors.Is(err, auth.ErrPasswordNotProvided) {
 		body.Code = "password_required"
 	}
+	if errors.Is(err, tgapp.ErrPendingAuthExpired) {
+		body.Code = "pending_auth_expired"
+	}
+	if errors.Is(err, tgapp.ErrPendingAuthInvalid) {
+		body.Code = "pending_auth_invalid"
+	}
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "not authorized"):
@@ -238,7 +246,7 @@ func ExitCodeFor(code string) int {
 	switch code {
 	case "invalid_input":
 		return ExitInvalidInput
-	case "not_authorized", "password_required", "missing_api_hash", "missing_api_id":
+	case "not_authorized", "password_required", "missing_api_hash", "missing_api_id", "pending_auth_expired", "pending_auth_invalid":
 		return ExitAuthOrConfig
 	case "peer_not_found":
 		return ExitNotFound

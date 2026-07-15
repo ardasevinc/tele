@@ -3,15 +3,105 @@ package telegram
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
+
+	"github.com/ardasevinc/tele/internal/config"
+	"github.com/ardasevinc/tele/internal/secrets"
+	telesession "github.com/ardasevinc/tele/internal/session"
 )
+
+type testSecretStore struct {
+	values map[string][]byte
+}
+
+func (s *testSecretStore) Get(_ context.Context, _, key string) ([]byte, error) {
+	value, ok := s.values[key]
+	if !ok {
+		return nil, secrets.ErrNotFound
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (s *testSecretStore) Set(_ context.Context, _, key string, value []byte) error {
+	s.values[key] = append([]byte(nil), value...)
+	return nil
+}
+
+func (s *testSecretStore) Delete(_ context.Context, _, key string) error {
+	delete(s.values, key)
+	return nil
+}
+
+func TestPendingAuthValidation(t *testing.T) {
+	now := time.Date(2026, time.July, 15, 12, 0, 0, 0, time.UTC)
+	valid := fmt.Sprintf(`{"phone":"+90555","phone_code_hash":"hash","created_at":%q}`, now.Add(-pendingAuthTTL+time.Second).Format(time.RFC3339))
+	if _, err := parsePendingAuth([]byte(valid), now); err != nil {
+		t.Fatalf("valid pending auth: %v", err)
+	}
+
+	expired := fmt.Sprintf(`{"phone":"+90555","phone_code_hash":"hash","created_at":%q}`, now.Add(-pendingAuthTTL-time.Second).Format(time.RFC3339))
+	if _, err := parsePendingAuth([]byte(expired), now); !errors.Is(err, ErrPendingAuthExpired) {
+		t.Fatalf("expired error = %v", err)
+	}
+	for _, invalid := range []string{"{", `{}`, `{"phone":"+90555","phone_code_hash":"hash","created_at":"nope"}`} {
+		if _, err := parsePendingAuth([]byte(invalid), now); !errors.Is(err, ErrPendingAuthInvalid) {
+			t.Fatalf("invalid %q error = %v", invalid, err)
+		}
+	}
+}
+
+func TestPendingAuthDeletesExpiredState(t *testing.T) {
+	store := &testSecretStore{values: map[string][]byte{}}
+	store.values[authPendingKey] = []byte(`{"phone":"+90555","phone_code_hash":"hash","created_at":"2000-01-01T00:00:00Z"}`)
+	app := App{Profile: "main", Secrets: store}
+	if _, err := app.pendingAuth(context.Background()); !errors.Is(err, ErrPendingAuthExpired) {
+		t.Fatalf("pendingAuth error = %v", err)
+	}
+	if _, ok := store.values[authPendingKey]; ok {
+		t.Fatal("expired pending auth was retained")
+	}
+}
+
+func TestResetLocalAuthDeletesEveryLocalAuthArtifact(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "main", "session.enc")
+	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionPath, []byte("ciphertext"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := &testSecretStore{values: map[string][]byte{
+		authPendingKey:            []byte("pending"),
+		telesession.Key:           []byte("legacy"),
+		telesession.EncryptionKey: []byte("key"),
+		apiHashKey:                []byte("keep-me"),
+	}}
+	app := App{Profile: "main", Paths: config.Paths{Data: dir}, Secrets: store}
+	if err := app.ResetLocalAuth(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(sessionPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("session still exists: %v", err)
+	}
+	for _, key := range []string{authPendingKey, telesession.Key, telesession.EncryptionKey} {
+		if _, ok := store.values[key]; ok {
+			t.Fatalf("auth artifact %q retained", key)
+		}
+	}
+	if string(store.values[apiHashKey]) != "keep-me" {
+		t.Fatal("API hash was unexpectedly deleted")
+	}
+}
 
 func TestParseAPIID(t *testing.T) {
 	id, err := ParseAPIID("123")

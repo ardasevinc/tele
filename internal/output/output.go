@@ -227,7 +227,7 @@ func ErrorFrom(err error) ErrorResponse {
 		if body.Code == "command_failed" {
 			body.Code = "peer_not_found"
 		}
-	case strings.Contains(msg, "requires") || strings.Contains(msg, "must be"):
+	case strings.Contains(msg, "requires") || strings.Contains(msg, "required") || strings.Contains(msg, "must be") || strings.Contains(msg, "must not be"):
 		if body.Code == "command_failed" {
 			body.Code = "invalid_input"
 		}

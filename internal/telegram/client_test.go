@@ -149,6 +149,14 @@ func TestParseAPIID(t *testing.T) {
 	}
 }
 
+func TestClientRunErrorPreservesCallbackFailure(t *testing.T) {
+	callbackErr := errors.New("local validation failed")
+	wrappedRunErr := fmt.Errorf("callback: %w", callbackErr)
+	if got := clientRunError(wrappedRunErr, callbackErr, true); !errors.Is(got, callbackErr) || got.Error() != callbackErr.Error() {
+		t.Fatalf("clientRunError() = %v, want exact callback error", got)
+	}
+}
+
 func TestSafeDownloadFileName(t *testing.T) {
 	got := safeDownloadFileName(42, "../weird:name.jpg")
 	if got != "42-weird-name.jpg" {

@@ -87,15 +87,20 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 	})
 	called := false
 	var callbackErr error
-	if err := client.Run(ctx, func(ctx context.Context) error {
+	runErr := client.Run(ctx, func(ctx context.Context) error {
 		called = true
 		callbackErr = fn(ctx, client)
 		return callbackErr
-	}); err != nil {
-		return err
-	}
+	})
+	return clientRunError(runErr, callbackErr, called)
+}
+
+func clientRunError(runErr, callbackErr error, called bool) error {
 	if callbackErr != nil {
 		return callbackErr
+	}
+	if runErr != nil {
+		return runErr
 	}
 	if !called {
 		return fmt.Errorf("telegram client closed before ready")

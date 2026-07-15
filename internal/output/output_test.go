@@ -125,6 +125,7 @@ func TestErrorFromAssignsStableExitFamilies(t *testing.T) {
 	}{
 		{name: "invalid input", err: errors.New("unknown flag: --wat"), code: "invalid_input", exit: ExitInvalidInput},
 		{name: "invalid negative bound", err: errors.New("--timeout must not be negative"), code: "invalid_input", exit: ExitInvalidInput},
+		{name: "invalid constrained operation", err: errors.New("channel messages can only be deleted with --revoke --yes"), code: "invalid_input", exit: ExitInvalidInput},
 		{name: "auth", err: errors.New("not authorized"), code: "not_authorized", exit: ExitAuthOrConfig},
 		{name: "expired pending auth", err: tgapp.ErrPendingAuthExpired, code: "pending_auth_expired", exit: ExitAuthOrConfig},
 		{name: "invalid pending auth", err: tgapp.ErrPendingAuthInvalid, code: "pending_auth_invalid", exit: ExitAuthOrConfig},

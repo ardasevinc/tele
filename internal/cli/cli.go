@@ -75,7 +75,7 @@ func Execute(ctx context.Context, args []string) error {
 		} else {
 			_, _ = fmt.Fprintln(state.err, "error:", safeHuman(err.Error()))
 		}
-		return exitError{code: 1, err: err}
+		return exitError{code: output.ErrorFrom(err).Error.ExitCode, err: err}
 	}
 	return nil
 }

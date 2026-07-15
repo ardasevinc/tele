@@ -112,3 +112,28 @@ func TestErrorRecordIsTyped(t *testing.T) {
 		t.Fatalf("ErrorRecordFrom = %+v", record)
 	}
 }
+
+func TestErrorFromAssignsStableExitFamilies(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		code string
+		exit int
+	}{
+		{name: "invalid input", err: errors.New("unknown flag: --wat"), code: "invalid_input", exit: ExitInvalidInput},
+		{name: "auth", err: errors.New("not authorized"), code: "not_authorized", exit: ExitAuthOrConfig},
+		{name: "peer", err: errors.New("peer x not in cache"), code: "peer_not_found", exit: ExitNotFound},
+		{name: "telegram", err: tgerr.New(400, "USERNAME_NOT_OCCUPIED"), code: "telegram_username_not_occupied", exit: ExitTelegram},
+		{name: "output", err: errors.New("write stdout: broken pipe"), code: "output_failed", exit: ExitLocalIO},
+		{name: "mutation", err: testMutationError{outcome: "outcome_unknown"}, code: "mutation_outcome_unknown", exit: ExitMutationReconcile},
+		{name: "general", err: errors.New("boom"), code: "command_failed", exit: ExitGeneral},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ErrorFrom(tt.err).Error
+			if got.Code != tt.code || got.ExitCode != tt.exit {
+				t.Fatalf("ErrorFrom = code %q exit %d, want code %q exit %d", got.Code, got.ExitCode, tt.code, tt.exit)
+			}
+		})
+	}
+}

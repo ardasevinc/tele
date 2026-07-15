@@ -22,6 +22,16 @@ const (
 	JSONL Format = "jsonl"
 )
 
+const (
+	ExitGeneral           = 1
+	ExitInvalidInput      = 2
+	ExitAuthOrConfig      = 3
+	ExitNotFound          = 4
+	ExitTelegram          = 5
+	ExitLocalIO           = 6
+	ExitMutationReconcile = 7
+)
+
 type Writer struct {
 	Out    io.Writer
 	Err    io.Writer
@@ -79,6 +89,7 @@ type ErrorResponse struct {
 type ErrorBody struct {
 	Code                 string `json:"code"`
 	Message              string `json:"message"`
+	ExitCode             int    `json:"exit_code"`
 	Outcome              string `json:"outcome,omitempty"`
 	RetrySafe            *bool  `json:"retry_safe,omitempty"`
 	ReconciliationHandle string `json:"reconciliation_handle,omitempty"`
@@ -207,8 +218,37 @@ func ErrorFrom(err error) ErrorResponse {
 		if body.Code == "command_failed" {
 			body.Code = "invalid_input"
 		}
+	case strings.Contains(msg, "unknown command") || strings.Contains(msg, "unknown flag") || strings.Contains(msg, "required flag") || strings.Contains(msg, "arg(s)") || strings.Contains(msg, "invalid argument"):
+		if body.Code == "command_failed" {
+			body.Code = "invalid_input"
+		}
+	case strings.Contains(msg, "broken pipe") || strings.Contains(msg, "closed pipe") || strings.Contains(msg, "short write"):
+		if body.Code == "command_failed" {
+			body.Code = "output_failed"
+		}
 	}
+	body.ExitCode = ExitCodeFor(body.Code)
 	return ErrorResponse{SchemaVersion: SchemaVersion, Error: body}
+}
+
+func ExitCodeFor(code string) int {
+	switch code {
+	case "invalid_input":
+		return ExitInvalidInput
+	case "not_authorized", "password_required", "missing_api_hash", "missing_api_id":
+		return ExitAuthOrConfig
+	case "peer_not_found":
+		return ExitNotFound
+	case "output_failed":
+		return ExitLocalIO
+	case "mutation_outcome_unknown", "mutation_confirmed_output_failed":
+		return ExitMutationReconcile
+	default:
+		if strings.HasPrefix(code, "telegram_") {
+			return ExitTelegram
+		}
+		return ExitGeneral
+	}
 }
 
 func ErrorRecordFrom(err error) Record {

@@ -31,6 +31,13 @@ func TestParseTimeFilterDuration(t *testing.T) {
 	}
 }
 
+func TestExitCodeUsesWrappedStableFamily(t *testing.T) {
+	err := exitError{code: output.ExitInvalidInput, err: errors.New("bad input")}
+	if got := ExitCode(err); got != output.ExitInvalidInput {
+		t.Fatalf("ExitCode = %d, want %d", got, output.ExitInvalidInput)
+	}
+}
+
 func TestParseTimeFilterDays(t *testing.T) {
 	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
 	got, err := parseTimeFilter("7d", now)

@@ -64,3 +64,84 @@ func TestConvertMessagesUsesActualSourceAndIncomingDirectSender(t *testing.T) {
 		t.Fatalf("direct identity = %+v", got)
 	}
 }
+
+func TestConvertMessagesCoversGroupAndChannelIdentityShapes(t *testing.T) {
+	user := &tg.User{ID: 10, AccessHash: 100, FirstName: "Alice"}
+	user.SetFlags()
+	group := &tg.Chat{ID: 30, Title: "Basic Group"}
+	channel := &tg.Channel{ID: 40, AccessHash: 400, Title: "News"}
+	channel.SetFlags()
+	supergroup := &tg.Channel{ID: 50, AccessHash: 500, Title: "Anon Group", Megagroup: true}
+	supergroup.SetFlags()
+
+	tests := []struct {
+		name        string
+		message     *tg.Message
+		chats       []tg.ChatClass
+		sourceRef   string
+		senderRef   string
+		senderLabel string
+	}{
+		{
+			name:        "basic group",
+			message:     &tg.Message{ID: 1, PeerID: &tg.PeerChat{ChatID: 30}, FromID: &tg.PeerUser{UserID: 10}, Message: "hello"},
+			chats:       []tg.ChatClass{group},
+			sourceRef:   "chat:30",
+			senderRef:   "user:10",
+			senderLabel: "Alice",
+		},
+		{
+			name:        "channel post",
+			message:     &tg.Message{ID: 2, PeerID: &tg.PeerChannel{ChannelID: 40}, Message: "news", Post: true},
+			chats:       []tg.ChatClass{channel},
+			sourceRef:   "channel:40",
+			senderRef:   "channel:40",
+			senderLabel: "News",
+		},
+		{
+			name:        "anonymous admin",
+			message:     &tg.Message{ID: 3, PeerID: &tg.PeerChannel{ChannelID: 50}, FromID: &tg.PeerChannel{ChannelID: 50}, Message: "admin"},
+			chats:       []tg.ChatClass{supergroup},
+			sourceRef:   "supergroup:50",
+			senderRef:   "supergroup:50",
+			senderLabel: "Anon Group",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.message.SetFlags()
+			messages, _ := convertMessages("", &tg.MessagesMessages{
+				Messages: []tg.MessageClass{tt.message},
+				Users:    []tg.UserClass{user},
+				Chats:    tt.chats,
+			})
+			got := messages[0]
+			if got.SourcePeerRef != tt.sourceRef || got.SenderPeerRef != tt.senderRef || got.SenderLabel != tt.senderLabel {
+				t.Fatalf("identity = source %q sender %q label %q", got.SourcePeerRef, got.SenderPeerRef, got.SenderLabel)
+			}
+		})
+	}
+}
+
+func TestConvertMessagesRepresentsHiddenForwardAndMissingEntityHonestly(t *testing.T) {
+	message := &tg.Message{
+		ID:      1,
+		PeerID:  &tg.PeerUser{UserID: 99},
+		FromID:  &tg.PeerUser{UserID: 99},
+		Message: "forwarded",
+		FwdFrom: tg.MessageFwdHeader{FromName: "Hidden Sender", Date: 900},
+	}
+	message.SetFlags()
+	messages, peers := convertMessages("", &tg.MessagesMessages{Messages: []tg.MessageClass{message}})
+	got := messages[0]
+	if got.SourcePeerRef != "user:99" || got.SourcePeerLabel != "" || got.SenderPeerRef != "user:99" || got.SenderLabel != "" {
+		t.Fatalf("missing entity was embellished: %+v", got)
+	}
+	if got.ForwardedFromPeerRef != "" || got.ForwardedFromLabel != "Hidden Sender" {
+		t.Fatalf("hidden forward identity = ref %q label %q", got.ForwardedFromPeerRef, got.ForwardedFromLabel)
+	}
+	if len(peers) != 0 {
+		t.Fatalf("missing entity created %d resolvable peers", len(peers))
+	}
+}

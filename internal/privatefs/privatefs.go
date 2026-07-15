@@ -45,6 +45,10 @@ func AtomicWriteFile(path string, data []byte) error {
 }
 
 func AtomicReplace(path string, write func(io.Writer) error) (err error) {
+	return AtomicReplaceFile(path, func(file *os.File) error { return write(file) })
+}
+
+func AtomicReplaceFile(path string, write func(*os.File) error) (err error) {
 	dir := filepath.Dir(path)
 	if err := EnsureDir(dir); err != nil {
 		return err

@@ -3,6 +3,9 @@ package telegram
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -31,6 +34,54 @@ func TestSafeDownloadFileName(t *testing.T) {
 	if got != "42-weird-name.jpg" {
 		t.Fatalf("safeDownloadFileName = %q, want %q", got, "42-weird-name.jpg")
 	}
+}
+
+func TestAtomicDownloadPromotesOnlyCompletePrivateFiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "media.bin")
+	if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("download interrupted")
+	_, err := atomicDownload(path, func(w io.WriterAt) (tg.StorageFileTypeClass, error) {
+		_, _ = w.WriteAt([]byte("partial"), 0)
+		return nil, want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("error = %v", err)
+	}
+	if got := string(mustReadFile(t, path)); got != "original" {
+		t.Fatalf("failed download replaced target with %q", got)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(dir, ".tele-tmp-*")); len(matches) != 0 {
+		t.Fatalf("partial files remain: %v", matches)
+	}
+
+	if _, err := atomicDownload(path, func(w io.WriterAt) (tg.StorageFileTypeClass, error) {
+		_, err := w.WriteAt([]byte("complete"), 0)
+		return nil, err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustReadFile(t, path)); got != "complete" {
+		t.Fatalf("completed download = %q", got)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("download mode = %04o", got)
+	}
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func TestPlanDelete(t *testing.T) {

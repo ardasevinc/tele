@@ -27,6 +27,7 @@ import (
 	"github.com/ardasevinc/tele/internal/buildinfo"
 	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/peerstore"
+	"github.com/ardasevinc/tele/internal/privatefs"
 	"github.com/ardasevinc/tele/internal/secrets"
 	telesession "github.com/ardasevinc/tele/internal/session"
 )
@@ -548,7 +549,8 @@ func (a App) DownloadMedia(ctx context.Context, opts MediaDownloadOptions) (Medi
 			if err != nil {
 				return err
 			}
-		} else if err := os.MkdirAll(dir, 0o700); err != nil {
+		}
+		if err := privatefs.EnsureDir(dir); err != nil {
 			return err
 		}
 		name := safeDownloadFileName(opts.MessageID, file.Name)
@@ -585,16 +587,18 @@ func (a App) DownloadMedia(ctx context.Context, opts MediaDownloadOptions) (Medi
 }
 
 func downloadToPath(ctx context.Context, c *telegram.Client, location tg.InputFileLocationClass, path string) (_ tg.StorageFileTypeClass, err error) {
-	f, err := os.OpenFile(filepath.Clean(path), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("create output file: %w", err)
-	}
-	defer func() {
-		if closeErr := f.Close(); err == nil {
-			err = closeErr
-		}
-	}()
-	return c.Download(location).Parallel(ctx, f)
+	return atomicDownload(filepath.Clean(path), func(w io.WriterAt) (tg.StorageFileTypeClass, error) {
+		return c.Download(location).Parallel(ctx, w)
+	})
+}
+
+func atomicDownload(path string, download func(io.WriterAt) (tg.StorageFileTypeClass, error)) (storage tg.StorageFileTypeClass, err error) {
+	err = privatefs.AtomicReplaceFile(path, func(file *os.File) error {
+		var downloadErr error
+		storage, downloadErr = download(file)
+		return downloadErr
+	})
+	return storage, err
 }
 
 func (a App) Send(ctx context.Context, peerToken, text string, replyTo int) (MutationResult, error) {

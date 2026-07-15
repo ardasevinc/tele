@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ardasevinc/tele/schemas/v1/envelope.schema.json",
+  "$id": "https://raw.githubusercontent.com/ardasevinc/tele/main/schemas/v1/envelope.schema.json",
   "title": "tele v1 JSON envelope",
   "type": "object",
   "required": ["schema_version", "meta", "data"],

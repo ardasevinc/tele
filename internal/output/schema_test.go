@@ -11,7 +11,7 @@ import (
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-const schemaBase = "https://github.com/ardasevinc/tele/schemas/v1/"
+const schemaBase = "https://raw.githubusercontent.com/ardasevinc/tele/main/schemas/v1/"
 
 func TestCanonicalGoldensValidateAgainstPublishedSchemas(t *testing.T) {
 	schemas := compilePublicSchemas(t)

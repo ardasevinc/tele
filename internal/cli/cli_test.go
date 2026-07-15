@@ -433,7 +433,7 @@ func runnableCommandPaths(root *cobra.Command) []string {
 
 func compileCommandEnvelopeSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
-	const base = "https://github.com/ardasevinc/tele/schemas/v1/"
+	const base = "https://raw.githubusercontent.com/ardasevinc/tele/main/schemas/v1/"
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	for _, name := range []string{"envelope.schema.json", "command-envelope.schema.json"} {
@@ -458,7 +458,7 @@ func compileCommandEnvelopeSchema(t *testing.T) *jsonschema.Schema {
 
 func compileJSONLRecordSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
-	const base = "https://github.com/ardasevinc/tele/schemas/v1/"
+	const base = "https://raw.githubusercontent.com/ardasevinc/tele/main/schemas/v1/"
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	for _, name := range []string{"envelope.schema.json", "error.schema.json", "command-envelope.schema.json", "record.schema.json"} {

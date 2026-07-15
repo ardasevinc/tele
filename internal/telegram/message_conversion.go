@@ -24,11 +24,12 @@ func convertMessages(sourceFallback string, res tg.MessagesMessagesClass) ([]Mes
 			item := Message{
 				ID:       msg.ID,
 				Date:     unixDate(msg.Date),
-				Text:     redactSensitiveText(msg.Message),
+				Text:     msg.Message,
 				Outgoing: msg.Out,
 				Post:     msg.Post,
 			}
 			hydrateMessageIdentity(&item, msg.PeerID, msg.FromID, sourceFallback, identities)
+			item.Text, item.Redactions = redactMessageText(item.SourcePeerRef, item.Text)
 			if media, ok := msg.GetMedia(); ok {
 				item.Media = media.TypeName()
 			}

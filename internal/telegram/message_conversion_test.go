@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/gotd/td/tg"
@@ -143,5 +144,20 @@ func TestConvertMessagesRepresentsHiddenForwardAndMissingEntityHonestly(t *testi
 	}
 	if len(peers) != 0 {
 		t.Fatalf("missing entity created %d resolvable peers", len(peers))
+	}
+}
+
+func TestConvertMessagesMarksTelegramLoginCodeRedaction(t *testing.T) {
+	service := &tg.User{ID: 777000, AccessHash: 1, FirstName: "Telegram"}
+	service.SetFlags()
+	message := &tg.Message{ID: 1, PeerID: &tg.PeerUser{UserID: 777000}, Message: "Login code: 12345"}
+	message.SetFlags()
+	messages, _ := convertMessages("", &tg.MessagesMessages{
+		Messages: []tg.MessageClass{message},
+		Users:    []tg.UserClass{service},
+	})
+	got := messages[0]
+	if strings.Contains(got.Text, "12345") || len(got.Redactions) != 1 || got.Redactions[0] != "telegram_login_code" {
+		t.Fatalf("converted service message = %+v", got)
 	}
 }

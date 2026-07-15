@@ -324,16 +324,17 @@ func (a App) Logout(ctx context.Context) error {
 }
 
 type Chat struct {
-	Ref                 string `json:"ref"`
-	Kind                string `json:"kind"`
-	ID                  int64  `json:"id"`
-	Title               string `json:"title"`
-	Username            string `json:"username,omitempty"`
-	UnreadCount         int    `json:"unread_count"`
-	UnreadMentionsCount int    `json:"unread_mentions_count,omitempty"`
-	TopMessageID        int    `json:"top_message_id,omitempty"`
-	LastMessageDate     string `json:"last_message_date,omitempty"`
-	LastMessagePreview  string `json:"last_message_preview,omitempty"`
+	Ref                   string   `json:"ref"`
+	Kind                  string   `json:"kind"`
+	ID                    int64    `json:"id"`
+	Title                 string   `json:"title"`
+	Username              string   `json:"username,omitempty"`
+	UnreadCount           int      `json:"unread_count"`
+	UnreadMentionsCount   int      `json:"unread_mentions_count,omitempty"`
+	TopMessageID          int      `json:"top_message_id,omitempty"`
+	LastMessageDate       string   `json:"last_message_date,omitempty"`
+	LastMessagePreview    string   `json:"last_message_preview,omitempty"`
+	LastMessageRedactions []string `json:"last_message_redactions,omitempty"`
 }
 
 type PeerInfo struct {
@@ -422,6 +423,7 @@ type Message struct {
 	EditDate             string          `json:"edit_date,omitempty"`
 	GroupedID            int64           `json:"grouped_id,omitempty"`
 	Entities             []MessageEntity `json:"entities,omitempty"`
+	Redactions           []string        `json:"redactions,omitempty"`
 }
 
 type MessageEntity struct {
@@ -845,16 +847,17 @@ func chatsFromDialogs(dialogs tg.MessagesDialogsClass) ([]Chat, []peerstore.Peer
 	addPeer := func(p peerstore.Peer, unread, mentions, top int, preview messagePreview) {
 		peers = append(peers, p)
 		items = append(items, Chat{
-			Ref:                 p.Ref,
-			Kind:                p.Kind,
-			ID:                  p.ID,
-			Title:               p.Title,
-			Username:            p.Username,
-			UnreadCount:         unread,
-			UnreadMentionsCount: mentions,
-			TopMessageID:        top,
-			LastMessageDate:     preview.Date,
-			LastMessagePreview:  preview.Text,
+			Ref:                   p.Ref,
+			Kind:                  p.Kind,
+			ID:                    p.ID,
+			Title:                 p.Title,
+			Username:              p.Username,
+			UnreadCount:           unread,
+			UnreadMentionsCount:   mentions,
+			TopMessageID:          top,
+			LastMessageDate:       preview.Date,
+			LastMessagePreview:    preview.Text,
+			LastMessageRedactions: preview.Redactions,
 		})
 	}
 	handle := func(dialogs []tg.DialogClass, messages []tg.MessageClass, users []tg.UserClass, chats []tg.ChatClass) {
@@ -902,8 +905,9 @@ func chatsFromDialogs(dialogs tg.MessagesDialogsClass) ([]Chat, []peerstore.Peer
 }
 
 type messagePreview struct {
-	Date string
-	Text string
+	Date       string
+	Text       string
+	Redactions []string
 }
 
 func messagePreviews(messages []tg.MessageClass) map[string]messagePreview {
@@ -911,13 +915,14 @@ func messagePreviews(messages []tg.MessageClass) map[string]messagePreview {
 	for _, cls := range messages {
 		switch msg := cls.(type) {
 		case *tg.Message:
-			text := strings.TrimSpace(redactSensitiveText(msg.Message))
+			text, redactions := redactMessageText(peerKey(msg.PeerID), msg.Message)
+			text = strings.TrimSpace(text)
 			if text == "" {
 				if media, ok := msg.GetMedia(); ok {
 					text = "[" + media.TypeName() + "]"
 				}
 			}
-			out[fmt.Sprintf("%s:%d", peerKey(msg.PeerID), msg.ID)] = messagePreview{Date: unixDate(msg.Date), Text: text}
+			out[fmt.Sprintf("%s:%d", peerKey(msg.PeerID), msg.ID)] = messagePreview{Date: unixDate(msg.Date), Text: text, Redactions: redactions}
 		case *tg.MessageService:
 			out[fmt.Sprintf("%s:%d", peerKey(msg.PeerID), msg.ID)] = messagePreview{Date: unixDate(msg.Date), Text: "[" + msg.Action.TypeName() + "]"}
 		}
@@ -1125,6 +1130,17 @@ func redactSensitiveText(text string) string {
 	text = loginCodeLineRE.ReplaceAllString(text, "${1}[redacted]")
 	text = webLoginCodeRE.ReplaceAllString(text, "${1}\n[redacted]")
 	return text
+}
+
+func redactMessageText(sourcePeerRef, text string) (string, []string) {
+	if sourcePeerRef != "user:777000" {
+		return text, nil
+	}
+	redacted := redactSensitiveText(text)
+	if redacted == text {
+		return text, nil
+	}
+	return redacted, []string{"telegram_login_code"}
 }
 
 type interactiveAuth struct {

@@ -220,7 +220,8 @@
         "unread_mentions_count": { "type": "integer", "minimum": 0 },
         "top_message_id": { "type": "integer", "minimum": 1 },
         "last_message_date": { "type": "string", "format": "date-time" },
-        "last_message_preview": { "type": "string" }
+        "last_message_preview": { "type": "string" },
+        "last_message_redactions": { "type": "array", "items": { "const": "telegram_login_code" }, "uniqueItems": true }
       },
       "additionalProperties": false
     },
@@ -257,7 +258,8 @@
         "forwarded_date": { "type": "string", "format": "date-time" },
         "edit_date": { "type": "string", "format": "date-time" },
         "grouped_id": { "type": "integer" },
-        "entities": { "type": "array", "items": { "$ref": "#/$defs/entity" } }
+        "entities": { "type": "array", "items": { "$ref": "#/$defs/entity" } },
+        "redactions": { "type": "array", "items": { "const": "telegram_login_code" }, "uniqueItems": true }
       },
       "additionalProperties": false
     },

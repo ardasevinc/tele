@@ -103,6 +103,36 @@ func TestResetLocalAuthDeletesEveryLocalAuthArtifact(t *testing.T) {
 	}
 }
 
+func TestInteractiveAuthUsesOneConfiguredBufferedInput(t *testing.T) {
+	authenticator := newInteractiveAuth(strings.NewReader("+90555\n12345\nsecret\n"), io.Discard, LoginOptions{})
+	phone, err := authenticator.Phone(context.Background())
+	if err != nil || phone != "+90555" {
+		t.Fatalf("phone = %q, err = %v", phone, err)
+	}
+	code, err := authenticator.Code(context.Background(), nil)
+	if err != nil || code != "12345" {
+		t.Fatalf("code = %q, err = %v", code, err)
+	}
+	password, err := authenticator.Password(context.Background())
+	if err != nil || password != "secret" {
+		t.Fatalf("password = %q, err = %v", password, err)
+	}
+}
+
+func TestInteractiveAuthPromptHonorsCancellation(t *testing.T) {
+	reader, writer := io.Pipe()
+	authenticator := newInteractiveAuth(reader, io.Discard, LoginOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := authenticator.Code(ctx, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Code error = %v, want deadline exceeded", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestParseAPIID(t *testing.T) {
 	id, err := ParseAPIID("123")
 	if err != nil {

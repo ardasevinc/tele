@@ -108,6 +108,61 @@ func TestWaitFlagUsesBoundedExplicitBudget(t *testing.T) {
 	}
 }
 
+func TestCommandAppropriateTimeoutDefaults(t *testing.T) {
+	tests := []struct {
+		command string
+		want    time.Duration
+	}{
+		{command: "tele config get", want: defaultLocalTimeout},
+		{command: "tele auth login", want: defaultAuthTimeout},
+		{command: "tele media download", want: defaultDownloadTimeout},
+		{command: "tele read", want: defaultCommandTimeout},
+	}
+	for _, tt := range tests {
+		if got := defaultTimeout(tt.command); got != tt.want {
+			t.Errorf("defaultTimeout(%q) = %s, want %s", tt.command, got, tt.want)
+		}
+	}
+}
+
+func TestApplyCommandTimeoutHonorsExplicitDeadlineAndParentCancellation(t *testing.T) {
+	cmd := &cobra.Command{Use: "operation"}
+	cmd.SetContext(context.Background())
+	state := &appState{timeout: 75 * time.Millisecond}
+	before := time.Now()
+	if err := applyCommandTimeout(cmd, state); err != nil {
+		t.Fatal(err)
+	}
+	defer state.cancel()
+	deadline, ok := cmd.Context().Deadline()
+	if !ok || deadline.Before(before.Add(50*time.Millisecond)) || deadline.After(before.Add(150*time.Millisecond)) {
+		t.Fatalf("deadline = %s, expected about 75ms after %s", deadline, before)
+	}
+
+	parent, cancelParent := context.WithCancel(context.Background())
+	cancelParent()
+	canceledCmd := &cobra.Command{Use: "operation"}
+	canceledCmd.SetContext(parent)
+	canceledState := &appState{timeout: time.Minute}
+	if err := applyCommandTimeout(canceledCmd, canceledState); err != nil {
+		t.Fatal(err)
+	}
+	defer canceledState.cancel()
+	if !errors.Is(canceledCmd.Context().Err(), context.Canceled) {
+		t.Fatalf("context error = %v, want canceled", canceledCmd.Context().Err())
+	}
+}
+
+func TestTimeoutBounds(t *testing.T) {
+	for _, timeout := range []time.Duration{-time.Second, maxCommandTimeout + time.Second} {
+		cmd := &cobra.Command{Use: "operation"}
+		cmd.SetContext(context.Background())
+		if err := applyCommandTimeout(cmd, &appState{timeout: timeout}); err == nil {
+			t.Fatalf("timeout %s accepted", timeout)
+		}
+	}
+}
+
 func TestReadOnlyGuardsEveryMutationCommand(t *testing.T) {
 	tests := [][]string{
 		{"--read-only", "send", "user:1", "--text", "hello"},
@@ -136,6 +191,16 @@ func TestJSONAndJSONLAreMutuallyExclusive(t *testing.T) {
 	err := cmd.ExecuteContext(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("execute error = %v", err)
+	}
+}
+
+func TestTextSourcesAreMutuallyExclusiveBeforeDryRun(t *testing.T) {
+	state := &appState{in: strings.NewReader("stdin must not be consumed"), out: &bytes.Buffer{}, err: &bytes.Buffer{}}
+	cmd := rootCommand(context.Background(), state)
+	cmd.SetArgs([]string{"--dry-run", "send", "user:1", "--text", "flag", "--text-stdin"})
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "--text and --text-stdin are mutually exclusive") {
+		t.Fatalf("send error = %v", err)
 	}
 }
 

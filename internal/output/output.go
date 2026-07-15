@@ -1,6 +1,7 @@
 package output
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -208,6 +209,11 @@ func ErrorFrom(err error) ErrorResponse {
 	}
 	if errors.Is(err, tgapp.ErrPendingAuthInvalid) {
 		body.Code = "pending_auth_invalid"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		body.Code = "timeout"
+	} else if errors.Is(err, context.Canceled) {
+		body.Code = "canceled"
 	}
 	msg := strings.ToLower(err.Error())
 	switch {

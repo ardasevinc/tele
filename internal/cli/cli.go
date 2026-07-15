@@ -51,11 +51,12 @@ type appState struct {
 	json     bool
 	jsonl    bool
 	quiet    bool
-	verbose  bool
 	readOnly bool
 	dryRun   bool
 	command  string
 	wait     time.Duration
+	timeout  time.Duration
+	cancel   context.CancelFunc
 
 	in  io.Reader
 	out io.Writer
@@ -68,6 +69,11 @@ func Execute(ctx context.Context, args []string) error {
 }
 
 func executeWithState(ctx context.Context, args []string, state *appState) error {
+	defer func() {
+		if state.cancel != nil {
+			state.cancel()
+		}
+	}()
 	if state.command == "" {
 		state.command = "tele"
 	}
@@ -108,7 +114,16 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 			if s.json && s.jsonl {
 				return fmt.Errorf("--json and --jsonl are mutually exclusive")
 			}
-			return tgapp.ValidateFloodWaitLimit(s.wait)
+			if err := tgapp.ValidateFloodWaitLimit(s.wait); err != nil {
+				return err
+			}
+			return applyCommandTimeout(cmd, s)
+		},
+		PersistentPostRun: func(cmd *cobra.Command, args []string) {
+			if s.cancel != nil {
+				s.cancel()
+				s.cancel = nil
+			}
 		},
 	}
 	cmd.PersistentFlags().StringVar(&s.cfgPath, "config", "", "config file path")
@@ -116,11 +131,11 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&s.json, "json", false, "write JSON output")
 	cmd.PersistentFlags().BoolVar(&s.jsonl, "jsonl", false, "write JSONL output")
 	cmd.PersistentFlags().BoolVar(&s.quiet, "quiet", false, "suppress human info output")
-	cmd.PersistentFlags().BoolVar(&s.verbose, "verbose", false, "write verbose diagnostics")
 	cmd.PersistentFlags().BoolVar(&s.readOnly, "read-only", false, "reject Telegram message mutations")
 	cmd.PersistentFlags().BoolVar(&s.dryRun, "dry-run", false, "resolve and validate message mutations without dispatching them")
 	cmd.PersistentFlags().DurationVar(&s.wait, "wait", 0, "wait and retry flood limits within this total budget (max 5m)")
 	cmd.PersistentFlags().Lookup("wait").NoOptDefVal = tgapp.DefaultFloodWaitLimit.String()
+	cmd.PersistentFlags().DurationVar(&s.timeout, "timeout", 0, "total command timeout (0 selects a command-appropriate default; max 30m)")
 	commands := []*cobra.Command{authCommand(s), meCommand(s), chatsCommand(s), readCommand(s), searchCommand(s), exportCommand(s), inboxCommand(s), mediaCommand(s)}
 	commands = append(commands, mutationCommands(s)...)
 	cmd.AddCommand(commands...)
@@ -623,6 +638,9 @@ func sendCommand(s *appState) *cobra.Command {
 			if err := s.requireWritable("send"); err != nil {
 				return err
 			}
+			if err := validateTextSources(text, textStdin); err != nil {
+				return err
+			}
 			if s.dryRun {
 				return previewMutation(s, cmd.Context(), "send", args[0], 0, "")
 			}
@@ -655,6 +673,9 @@ func replyCommand(s *appState) *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := s.requireWritable("reply"); err != nil {
+				return err
+			}
+			if err := validateTextSources(text, textStdin); err != nil {
 				return err
 			}
 			msgID, err := parsePositiveInt(args[1], "msg-id")
@@ -729,6 +750,9 @@ func editCommand(s *appState) *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := s.requireWritable("edit"); err != nil {
+				return err
+			}
+			if err := validateTextSources(text, textStdin); err != nil {
 				return err
 			}
 			msgID, err := parsePositiveInt(args[1], "msg-id")
@@ -1216,6 +1240,9 @@ func parseTimeFilter(value string, now time.Time) (time.Time, error) {
 }
 
 func textInput(s *appState, text string, textStdin bool) (string, error) {
+	if err := validateTextSources(text, textStdin); err != nil {
+		return "", err
+	}
 	if textStdin {
 		b, err := io.ReadAll(s.in)
 		if err != nil {
@@ -1228,6 +1255,56 @@ func textInput(s *appState, text string, textStdin bool) (string, error) {
 		return "", fmt.Errorf("message text is required; pass --text or --text-stdin")
 	}
 	return text, nil
+}
+
+func validateTextSources(text string, textStdin bool) error {
+	if textStdin && text != "" {
+		return fmt.Errorf("--text and --text-stdin are mutually exclusive")
+	}
+	return nil
+}
+
+const (
+	defaultLocalTimeout    = 30 * time.Second
+	defaultCommandTimeout  = 2 * time.Minute
+	defaultAuthTimeout     = 5 * time.Minute
+	defaultDownloadTimeout = 10 * time.Minute
+	maxCommandTimeout      = 30 * time.Minute
+)
+
+func applyCommandTimeout(cmd *cobra.Command, s *appState) error {
+	if s.timeout < 0 {
+		return fmt.Errorf("--timeout must not be negative")
+	}
+	if s.timeout > maxCommandTimeout {
+		return fmt.Errorf("--timeout must be at most %s", maxCommandTimeout)
+	}
+	duration := s.timeout
+	if duration == 0 {
+		duration = defaultTimeout(cmd.CommandPath())
+	}
+	ctx, cancel := context.WithTimeout(cmd.Context(), duration)
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.cancel = cancel
+	cmd.SetContext(ctx)
+	return nil
+}
+
+func defaultTimeout(command string) time.Duration {
+	switch command {
+	case "tele auth login", "tele auth start", "tele auth complete":
+		return defaultAuthTimeout
+	case "tele media download":
+		return defaultDownloadTimeout
+	case "tele config get", "tele config path", "tele config set",
+		"tele profiles current", "tele profiles list", "tele profiles use",
+		"tele doctor", "tele auth reset-local":
+		return defaultLocalTimeout
+	default:
+		return defaultCommandTimeout
+	}
 }
 
 func parsePositiveInt(value, name string) (int, error) {

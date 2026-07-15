@@ -180,11 +180,9 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 		},
 		Middlewares: floodWaitMiddlewares(a.FloodWaitLimit),
 	})
-	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second+a.FloodWaitLimit)
-	defer cancel()
 	called := false
 	var callbackErr error
-	if err := client.Run(runCtx, func(ctx context.Context) error {
+	if err := client.Run(ctx, func(ctx context.Context) error {
 		called = true
 		callbackErr = fn(ctx, client)
 		return callbackErr
@@ -210,14 +208,7 @@ func floodWaitMiddlewares(limit time.Duration) []telegram.Middleware {
 func (a App) Login(ctx context.Context, opts LoginOptions) (AuthStatus, error) {
 	status := AuthStatus{Profile: a.Profile}
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
-		flow := auth.NewFlow(interactiveAuth{
-			in:             a.In,
-			err:            a.Err,
-			phone:          opts.Phone,
-			code:           opts.Code,
-			password:       opts.Password,
-			nonInteractive: opts.NonInteractive,
-		}, auth.SendCodeOptions{})
+		flow := auth.NewFlow(newInteractiveAuth(a.In, a.Err, opts), auth.SendCodeOptions{})
 		if err := flow.Run(ctx, c.Auth()); err != nil {
 			return err
 		}
@@ -1182,7 +1173,8 @@ func redactMessageText(sourcePeerRef, text string) (string, []string) {
 }
 
 type interactiveAuth struct {
-	in             io.Reader
+	reader         *bufio.Reader
+	terminal       *os.File
 	err            io.Writer
 	phone          string
 	code           string
@@ -1190,37 +1182,52 @@ type interactiveAuth struct {
 	nonInteractive bool
 }
 
-func (a interactiveAuth) Phone(ctx context.Context) (string, error) {
+func newInteractiveAuth(in io.Reader, errOut io.Writer, opts LoginOptions) *interactiveAuth {
+	a := &interactiveAuth{
+		reader:         bufio.NewReader(in),
+		err:            errOut,
+		phone:          opts.Phone,
+		code:           opts.Code,
+		password:       opts.Password,
+		nonInteractive: opts.NonInteractive,
+	}
+	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		a.terminal = file
+	}
+	return a
+}
+
+func (a *interactiveAuth) Phone(ctx context.Context) (string, error) {
 	if a.phone != "" {
 		return a.phone, nil
 	}
 	return a.prompt(ctx, "phone: ", false)
 }
 
-func (a interactiveAuth) Password(ctx context.Context) (string, error) {
+func (a *interactiveAuth) Password(ctx context.Context) (string, error) {
 	if a.password != "" {
 		return a.password, nil
 	}
 	return a.prompt(ctx, "2fa password: ", true)
 }
 
-func (a interactiveAuth) Code(ctx context.Context, _ *tg.AuthSentCode) (string, error) {
+func (a *interactiveAuth) Code(ctx context.Context, _ *tg.AuthSentCode) (string, error) {
 	if a.code != "" {
 		return a.code, nil
 	}
 	return a.prompt(ctx, "login code: ", false)
 }
 
-func (a interactiveAuth) AcceptTermsOfService(context.Context, tg.HelpTermsOfService) error {
+func (a *interactiveAuth) AcceptTermsOfService(context.Context, tg.HelpTermsOfService) error {
 	_, _ = fmt.Fprintln(a.err, "Telegram returned terms of service; accept them in the official app before continuing.")
 	return fmt.Errorf("terms of service acceptance is not implemented in tele alpha")
 }
 
-func (a interactiveAuth) SignUp(context.Context) (auth.UserInfo, error) {
+func (a *interactiveAuth) SignUp(context.Context) (auth.UserInfo, error) {
 	return auth.UserInfo{}, fmt.Errorf("sign-up is intentionally unsupported; use an established account")
 }
 
-func (a interactiveAuth) prompt(ctx context.Context, label string, hidden bool) (string, error) {
+func (a *interactiveAuth) prompt(ctx context.Context, label string, hidden bool) (string, error) {
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()
@@ -1230,19 +1237,30 @@ func (a interactiveAuth) prompt(ctx context.Context, label string, hidden bool) 
 		return "", fmt.Errorf("missing %s for non-interactive login", strings.TrimSuffix(label, ": "))
 	}
 	_, _ = fmt.Fprint(a.err, label)
-	if hidden {
-		if term.IsTerminal(int(os.Stdin.Fd())) {
-			b, err := term.ReadPassword(int(os.Stdin.Fd()))
+	type result struct {
+		value string
+		err   error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		if hidden && a.terminal != nil {
+			b, err := term.ReadPassword(int(a.terminal.Fd()))
 			_, _ = fmt.Fprintln(a.err)
-			return strings.TrimSpace(string(b)), err
+			resultCh <- result{value: string(b), err: err}
+			return
 		}
+		value, err := a.reader.ReadString('\n')
+		if errors.Is(err, io.EOF) {
+			err = nil
+		}
+		resultCh <- result{value: value, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case result := <-resultCh:
+		return strings.TrimSpace(result.value), result.err
 	}
-	reader := bufio.NewReader(a.in)
-	value, err := reader.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
-	}
-	return strings.TrimSpace(value), nil
 }
 
 func ParseAPIID(value string) (int64, error) {

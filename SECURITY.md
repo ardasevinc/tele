@@ -5,8 +5,9 @@ Treat a machine with an authorized profile as account-sensitive.
 
 ## Supported versions
 
-Security fixes are applied to the latest published release. The current alpha
-may include breaking changes when that is the safest durable fix.
+Security fixes are applied to the latest published release. `tele` follows
+semantic versioning; an urgent fix may still narrow behavior that cannot remain
+safe under the existing contract.
 
 ## Reporting a vulnerability
 

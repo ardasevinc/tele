@@ -12,12 +12,13 @@ config, read/search/export, inbox triage, and opt-in message mutations.
 
 ## Status and support
 
-Early alpha. Commands and machine schemas may change to correct unsafe or
-misleading behavior before v1.
+Stable v1. Breaking command or machine-schema changes require a new major
+version. Minor releases may add commands without changing existing command
+contracts; urgent safety fixes may narrow behavior that cannot remain safe.
 
 | Platform | Status | Secret storage |
 | --- | --- | --- |
-| macOS arm64/amd64 | supported alpha | macOS Keychain |
+| macOS arm64/amd64 | supported | macOS Keychain |
 | Linux arm64/amd64 | preview build only | not implemented yet |
 | Windows amd64 | compile-smoke only | not implemented |
 

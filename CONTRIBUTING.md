@@ -29,6 +29,7 @@ Commits use conventional prefixes such as `fix:`, `feat:`, `refactor:`,
 
 ## Compatibility
 
-The current alpha may break commands and schemas to fix unsafe or misleading
-behavior. Public machine output is versioned under `schemas/`; update schemas,
-goldens, and the complete command matrix together when changing it.
+Stable releases follow semantic versioning. Breaking command or machine-schema
+changes require a new major version. Public machine output is versioned under
+`schemas/`; update schemas, goldens, and the complete command matrix together
+when changing it.

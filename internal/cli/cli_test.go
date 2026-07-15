@@ -361,6 +361,54 @@ func TestPublicAuthViewsOmitPhoneAndPendingCodeHash(t *testing.T) {
 	}
 }
 
+func TestAuthSecretsCannotBePassedInProcessArguments(t *testing.T) {
+	root := rootCommand(context.Background(), &appState{in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{}})
+	auth, _, err := root.Find([]string{"auth"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, commandName := range []string{"login", "complete"} {
+		command, _, err := auth.Find([]string{commandName})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, secretFlag := range []string{"code", "password"} {
+			if command.Flags().Lookup(secretFlag) != nil {
+				t.Fatalf("tele auth %s exposes --%s", commandName, secretFlag)
+			}
+		}
+		for _, envFlag := range []string{"code-env", "password-env"} {
+			if command.Flags().Lookup(envFlag) == nil {
+				t.Fatalf("tele auth %s missing --%s", commandName, envFlag)
+			}
+		}
+	}
+}
+
+func TestConfigAPIHashRejectsInlineSecret(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := config.Save(path, config.Config{DefaultProfile: "main", Profiles: map[string]config.Profile{"main": {APIID: 123}}}); err != nil {
+		t.Fatal(err)
+	}
+	state := &appState{in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{}}
+	cmd := rootCommand(context.Background(), state)
+	cmd.SetArgs([]string{"--config", path, "config", "set", "api-hash", "not-secret-enough"})
+	if err := cmd.ExecuteContext(context.Background()); err == nil || !strings.Contains(err.Error(), "must not be passed inline") {
+		t.Fatalf("inline API hash error = %v", err)
+	}
+}
+
+func TestReadSecretUsesNonEchoingInputBoundary(t *testing.T) {
+	var prompt bytes.Buffer
+	got, err := readSecret(strings.NewReader("secret-value\n"), &prompt, "secret: ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "secret-value" || prompt.String() != "secret: " || strings.Contains(prompt.String(), got) {
+		t.Fatalf("readSecret = %q prompt=%q", got, prompt.String())
+	}
+}
+
 func TestConfigGetUsesMachineEnvelopeAndTypedJSONL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := config.Save(path, config.Config{

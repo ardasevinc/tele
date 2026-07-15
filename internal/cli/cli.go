@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/ardasevinc/tele/internal/buildinfo"
 	"github.com/ardasevinc/tele/internal/config"
@@ -139,9 +140,7 @@ func authCommand(s *appState) *cobra.Command {
 	cmd := &cobra.Command{Use: "auth", Short: "Manage Telegram account auth"}
 	var phone string
 	var phoneEnv string
-	var code string
 	var codeEnv string
-	var password string
 	var passwordEnv string
 	var nonInteractive bool
 	login := &cobra.Command{
@@ -154,8 +153,8 @@ func authCommand(s *appState) *cobra.Command {
 			}
 			opts := tgapp.LoginOptions{
 				Phone:          firstNonEmpty(phone, envValue(phoneEnv)),
-				Code:           firstNonEmpty(code, envValue(codeEnv)),
-				Password:       firstNonEmpty(password, envValue(passwordEnv)),
+				Code:           envValue(codeEnv),
+				Password:       envValue(passwordEnv),
 				NonInteractive: nonInteractive,
 			}
 			status, err := app.Login(cmd.Context(), opts)
@@ -172,9 +171,7 @@ func authCommand(s *appState) *cobra.Command {
 	}
 	login.Flags().StringVar(&phone, "phone", "", "phone number for login")
 	login.Flags().StringVar(&phoneEnv, "phone-env", "", "environment variable containing phone number")
-	login.Flags().StringVar(&code, "code", "", "login code")
 	login.Flags().StringVar(&codeEnv, "code-env", "", "environment variable containing login code")
-	login.Flags().StringVar(&password, "password", "", "2FA password")
 	login.Flags().StringVar(&passwordEnv, "password-env", "", "environment variable containing 2FA password")
 	login.Flags().BoolVar(&nonInteractive, "non-interactive", false, "fail instead of prompting for missing login values")
 	cmd.AddCommand(login)
@@ -213,7 +210,7 @@ func authCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			status, err := app.AuthComplete(cmd.Context(), firstNonEmpty(code, envValue(codeEnv)), firstNonEmpty(password, envValue(passwordEnv)))
+			status, err := app.AuthComplete(cmd.Context(), envValue(codeEnv), envValue(passwordEnv))
 			if err != nil {
 				return err
 			}
@@ -225,9 +222,7 @@ func authCommand(s *appState) *cobra.Command {
 			})
 		},
 	}
-	complete.Flags().StringVar(&code, "code", "", "login code")
 	complete.Flags().StringVar(&codeEnv, "code-env", "", "environment variable containing login code")
-	complete.Flags().StringVar(&password, "password", "", "2FA password")
 	complete.Flags().StringVar(&passwordEnv, "password-env", "", "environment variable containing 2FA password")
 	cmd.AddCommand(complete)
 	cmd.AddCommand(&cobra.Command{
@@ -786,6 +781,7 @@ func deleteCommand(s *appState) *cobra.Command {
 }
 
 func configCommand(s *appState) *cobra.Command {
+	var valueEnv string
 	cmd := &cobra.Command{Use: "config", Short: "Manage tele config"}
 	cmd.AddCommand(&cobra.Command{
 		Use:   "path",
@@ -837,11 +833,14 @@ func configCommand(s *appState) *cobra.Command {
 			}
 		},
 	})
-	cmd.AddCommand(&cobra.Command{
+	set := &cobra.Command{
 		Use:   "set <key> [value]",
 		Short: "Set config value",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if valueEnv != "" && args[0] != "api-hash" {
+				return fmt.Errorf("--value-env is only valid for api-hash")
+			}
 			cfg, err := s.loadConfig()
 			if err != nil {
 				return err
@@ -863,18 +862,15 @@ func configCommand(s *appState) *cobra.Command {
 				profile.APIID = id
 				cfg.Profiles[profileName] = profile
 			case "api-hash":
-				hash := ""
-				if len(args) == 2 {
-					hash = args[1]
-				} else {
-					if _, err := fmt.Fprint(s.err, "api_hash: "); err != nil {
+				if len(args) != 1 {
+					return fmt.Errorf("api-hash must not be passed inline; use the hidden prompt or --value-env")
+				}
+				hash := envValue(valueEnv)
+				if hash == "" {
+					hash, err = readSecret(s.in, s.err, "api_hash: ")
+					if err != nil {
 						return err
 					}
-					var line string
-					if _, err := fmt.Fscanln(s.in, &line); err != nil {
-						return err
-					}
-					hash = line
 				}
 				app := tgapp.App{Config: cfg, Profile: profileName, Paths: mustPaths(), Secrets: secrets.NewStore(), In: s.in, Out: s.out, Err: s.err}
 				if err := app.SetAPIHash(cmd.Context(), hash); err != nil {
@@ -898,7 +894,9 @@ func configCommand(s *appState) *cobra.Command {
 				return w.Print("ok")
 			})
 		},
-	})
+	}
+	set.Flags().StringVar(&valueEnv, "value-env", "", "environment variable containing the API hash")
+	cmd.AddCommand(set)
 	return cmd
 }
 
@@ -1249,6 +1247,25 @@ func envValue(name string) string {
 		return ""
 	}
 	return os.Getenv(name)
+}
+
+func readSecret(in io.Reader, prompt io.Writer, label string) (string, error) {
+	if _, err := fmt.Fprint(prompt, label); err != nil {
+		return "", err
+	}
+	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		value, err := term.ReadPassword(int(file.Fd()))
+		_, _ = fmt.Fprintln(prompt)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(value)), nil
+	}
+	var value string
+	if _, err := fmt.Fscanln(in, &value); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(value), nil
 }
 
 func mustPaths() config.Paths {

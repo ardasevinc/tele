@@ -80,7 +80,7 @@ func run(version, commit, output string) error {
 		}
 		name := fmt.Sprintf("tele_%s_%s_%s.tar.gz", version, target.os, target.arch)
 		archivePath := filepath.Join(output, name)
-		if err := writeArchive(archivePath, binary); err != nil {
+		if err := writeArchive(archivePath, binary, "LICENSE"); err != nil {
 			return fmt.Errorf("package %s/%s: %w", target.os, target.arch, err)
 		}
 		digest, err := fileDigest(archivePath)
@@ -93,8 +93,12 @@ func run(version, commit, output string) error {
 	return os.WriteFile(filepath.Join(output, "checksums.txt"), []byte(strings.Join(checksums, "\n")+"\n"), 0o644) // #nosec G306 -- release checksums are intentionally public-readable.
 }
 
-func writeArchive(path, binary string) (retErr error) {
+func writeArchive(path, binary, license string) (retErr error) {
 	data, err := os.ReadFile(binary) // #nosec G304 -- binary is an internally generated release path.
+	if err != nil {
+		return err
+	}
+	licenseData, err := os.ReadFile(license) // #nosec G304 -- license is the repository-controlled release notice.
 	if err != nil {
 		return err
 	}
@@ -114,12 +118,21 @@ func writeArchive(path, binary string) (retErr error) {
 	zipper.ModTime = time.Unix(0, 0).UTC()
 	zipper.OS = 255
 	archive := tar.NewWriter(zipper)
-	header := &tar.Header{Name: "tele", Mode: 0o755, Size: int64(len(data)), ModTime: time.Unix(0, 0).UTC(), Typeflag: tar.TypeReg, Format: tar.FormatUSTAR}
-	if err := archive.WriteHeader(header); err != nil {
-		return err
-	}
-	if _, err := archive.Write(data); err != nil {
-		return err
+	for _, entry := range []struct {
+		name string
+		mode int64
+		data []byte
+	}{
+		{name: "tele", mode: 0o755, data: data},
+		{name: "LICENSE", mode: 0o644, data: licenseData},
+	} {
+		header := &tar.Header{Name: entry.name, Mode: entry.mode, Size: int64(len(entry.data)), ModTime: time.Unix(0, 0).UTC(), Typeflag: tar.TypeReg, Format: tar.FormatUSTAR}
+		if err := archive.WriteHeader(header); err != nil {
+			return err
+		}
+		if _, err := archive.Write(entry.data); err != nil {
+			return err
+		}
 	}
 	if err := archive.Close(); err != nil {
 		return err

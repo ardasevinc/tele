@@ -111,15 +111,19 @@ func (s KeychainStorage) Delete(ctx context.Context) error {
 }
 
 func (s KeychainStorage) delete(ctx context.Context) error {
+	var errs []error
 	if s.Path != "" {
 		if err := os.Remove(s.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+			errs = append(errs, err)
 		}
 	}
 	if err := s.Store.Delete(ctx, s.Profile, EncryptionKey); err != nil {
-		return err
+		errs = append(errs, err)
 	}
-	return s.Store.Delete(ctx, s.Profile, Key)
+	if err := s.Store.Delete(ctx, s.Profile, Key); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 func (s KeychainStorage) key(ctx context.Context, create bool) ([]byte, error) {

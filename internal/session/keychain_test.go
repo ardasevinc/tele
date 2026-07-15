@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -66,6 +67,33 @@ func TestLoadSessionMapsMissingSecretToGotdErrNotFound(t *testing.T) {
 
 type memoryStore struct {
 	values map[string][]byte
+}
+
+type trackingDeleteStore struct {
+	deleted []string
+}
+
+func (*trackingDeleteStore) Get(context.Context, string, string) ([]byte, error) {
+	return nil, secrets.ErrNotFound
+}
+func (*trackingDeleteStore) Set(context.Context, string, string, []byte) error { return nil }
+func (s *trackingDeleteStore) Delete(_ context.Context, _ string, key string) error {
+	s.deleted = append(s.deleted, key)
+	if key == EncryptionKey {
+		return errors.New("keychain unavailable")
+	}
+	return nil
+}
+
+func TestDeleteAttemptsEverySecretAfterFailure(t *testing.T) {
+	store := &trackingDeleteStore{}
+	storage := KeychainStorage{Profile: "test", Store: store, Path: filepath.Join(t.TempDir(), "missing.enc")}
+	if err := storage.Delete(context.Background()); err == nil || !strings.Contains(err.Error(), "keychain unavailable") {
+		t.Fatalf("Delete error = %v", err)
+	}
+	if got, want := strings.Join(store.deleted, ","), EncryptionKey+","+Key; got != want {
+		t.Fatalf("deleted keys = %q, want %q", got, want)
+	}
 }
 
 func (m memoryStore) Get(_ context.Context, _ string, key string) ([]byte, error) {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/ardasevinc/tele/main/schemas/v1/record.schema.json",
+  "$id": "https://raw.githubusercontent.com/ardasevinc/tele/refs/heads/main/schemas/v1/record.schema.json",
   "title": "tele v1 JSONL record",
   "type": "object",
   "required": ["schema_version", "type"],

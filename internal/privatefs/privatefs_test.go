@@ -61,6 +61,27 @@ func TestAtomicReplacePreservesOriginalAndRemovesTempOnFailure(t *testing.T) {
 	}
 }
 
+func TestAtomicReplacePreservesOriginalOnShortWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "value")
+	if err := os.WriteFile(path, []byte("original"), FileMode); err != nil {
+		t.Fatal(err)
+	}
+	err := AtomicReplace(path, func(w io.Writer) error {
+		_, _ = w.Write([]byte("partial"))
+		return io.ErrShortWrite
+	})
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("error = %v, want short write", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original" {
+		t.Fatalf("short write replaced original with %q", got)
+	}
+}
+
 func TestRepairFileTightensExistingModes(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(dir, 0o777); err != nil {

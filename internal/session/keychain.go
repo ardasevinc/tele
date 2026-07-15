@@ -39,6 +39,26 @@ func (s KeychainStorage) LoadSession(ctx context.Context) ([]byte, error) {
 	return data, err
 }
 
+// InspectSession reads and decrypts session state without repairing permissions,
+// acquiring a mutation lock, or creating missing key material.
+func (s KeychainStorage) InspectSession(ctx context.Context) ([]byte, error) {
+	ciphertext, err := os.ReadFile(s.Path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, gotdsession.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	key, err := s.key(ctx, false)
+	if errors.Is(err, secrets.ErrNotFound) {
+		return nil, gotdsession.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return decrypt(key, ciphertext)
+}
+
 func (s KeychainStorage) loadSession(ctx context.Context) ([]byte, error) {
 	if err := privatefs.RepairFile(s.Path); err != nil {
 		return nil, err

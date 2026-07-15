@@ -22,6 +22,16 @@ func TestLoadDefaultsWhenMissing(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsCorruptConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[profiles\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load accepted corrupt TOML")
+	}
+}
+
 func TestUpdateSerializesConcurrentConfigMutations(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	const workers = 20

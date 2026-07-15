@@ -72,6 +72,15 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return cfg, err
 	}
+	cfg, err = Parse(b)
+	if err != nil {
+		return cfg, err
+	}
+	return cfg, nil
+}
+
+func Parse(b []byte) (Config, error) {
+	var cfg Config
 	if err := toml.Unmarshal(b, &cfg); err != nil {
 		return cfg, err
 	}

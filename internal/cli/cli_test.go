@@ -14,6 +14,7 @@ import (
 
 	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/output"
+	"github.com/ardasevinc/tele/internal/secrets"
 	tgapp "github.com/ardasevinc/tele/internal/telegram"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/spf13/cobra"
@@ -22,6 +23,14 @@ import (
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+type cliMemoryStore struct{}
+
+func (cliMemoryStore) Get(context.Context, string, string) ([]byte, error) {
+	return nil, secrets.ErrNotFound
+}
+func (cliMemoryStore) Set(context.Context, string, string, []byte) error { return nil }
+func (cliMemoryStore) Delete(context.Context, string, string) error      { return nil }
 
 func TestParseTimeFilterDuration(t *testing.T) {
 	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
@@ -275,6 +284,41 @@ func TestExecuteClassifiesBrokenStdout(t *testing.T) {
 	err := executeWithState(context.Background(), []string{"--json", "config", "path"}, state)
 	if got := ExitCode(err); got != output.ExitLocalIO {
 		t.Fatalf("broken stdout exit = %d, want %d: %v", got, output.ExitLocalIO, err)
+	}
+}
+
+func TestDoctorReportsAllFailuresOnceAndExitsNonzero(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	state := &appState{
+		in:                      strings.NewReader(""),
+		out:                     &stdout,
+		err:                     &stderr,
+		secretStore:             cliMemoryStore{},
+		secretBackend:           "unsupported test store",
+		secretBackendConfigured: true,
+	}
+	missingConfig := filepath.Join(t.TempDir(), "missing.toml")
+	err := executeWithState(context.Background(), []string{"--json", "--config", missingConfig, "doctor"}, state)
+	if got := ExitCode(err); got != output.ExitGeneral {
+		t.Fatalf("doctor exit = %d, want %d: %v", got, output.ExitGeneral, err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("doctor wrote duplicate stderr: %q", stderr.String())
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("doctor output is not one JSON envelope: %v\n%s", err, stdout.String())
+	}
+	if _, exists := envelope["error"]; exists {
+		t.Fatalf("doctor emitted a second error contract: %s", stdout.String())
+	}
+	data, ok := envelope["data"].(map[string]any)
+	if !ok || data["ok"] != false {
+		t.Fatalf("doctor data = %#v", envelope["data"])
+	}
+	checks, ok := data["checks"].([]any)
+	if !ok || len(checks) < 10 {
+		t.Fatalf("doctor checks = %#v", data["checks"])
 	}
 }
 

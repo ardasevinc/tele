@@ -13,6 +13,10 @@ func NewStore() Store {
 	return unsupportedStore{}
 }
 
+func Backend() (name string, supported bool) {
+	return "unsupported on " + runtime.GOOS, false
+}
+
 func (unsupportedStore) Get(context.Context, string, string) ([]byte, error) {
 	return nil, ErrNotFound
 }

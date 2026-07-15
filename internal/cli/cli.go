@@ -26,6 +26,14 @@ type exitError struct {
 	err  error
 }
 
+type reportedError struct {
+	code int
+	err  error
+}
+
+func (e reportedError) Error() string { return e.err.Error() }
+func (e reportedError) Unwrap() error { return e.err }
+
 func (e exitError) Error() string {
 	return e.err.Error()
 }
@@ -58,6 +66,11 @@ type appState struct {
 	timeout  time.Duration
 	cancel   context.CancelFunc
 
+	secretStore             secrets.Store
+	secretBackend           string
+	secretBackendSupported  bool
+	secretBackendConfigured bool
+
 	in  io.Reader
 	out io.Writer
 	err io.Writer
@@ -83,6 +96,10 @@ func executeWithState(ctx context.Context, args []string, state *appState) error
 	cmd.SetOut(state.out)
 	cmd.SetErr(state.err)
 	if err := cmd.ExecuteContext(ctx); err != nil {
+		var reported reportedError
+		if errors.As(err, &reported) {
+			return exitError(reported)
+		}
 		w := state.writer()
 		response := output.ErrorFrom(err)
 		meta := state.meta(0, "", nil)
@@ -1025,51 +1042,6 @@ func profilesCommand(s *appState) *cobra.Command {
 	return cmd
 }
 
-func doctorCommand(s *appState) *cobra.Command {
-	return &cobra.Command{
-		Use:   "doctor",
-		Short: "Check local tele setup",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			paths, err := config.DefaultPaths()
-			if err != nil {
-				return err
-			}
-			if s.cfgPath != "" {
-				paths.Config = s.cfgPath
-			}
-			cfg, err := s.loadConfig()
-			if err != nil {
-				return err
-			}
-			profile, _, err := cfg.ResolveProfile(s.profile)
-			if err != nil {
-				return err
-			}
-			modeErr := config.CheckFileMode(paths.Config)
-			body := map[string]any{
-				"version":        buildinfo.Version,
-				"profile":        profile,
-				"config":         paths.Config,
-				"data":           paths.Data,
-				"config_mode_ok": modeErr == nil,
-				"keychain":       "macOS Keychain",
-			}
-			if modeErr != nil {
-				body["config_mode_error"] = modeErr.Error()
-			}
-			return writeValue(s, body, func(w output.Writer) error {
-				if _, err := fmt.Fprintf(w.Out, "version: %s\nprofile: %s\nconfig: %s\ndata: %s\n", safeHuman(buildinfo.Version), safeHuman(profile), safeHuman(paths.Config), safeHuman(paths.Data)); err != nil {
-					return err
-				}
-				if modeErr != nil {
-					w.Warn("%s", modeErr.Error())
-				}
-				return nil
-			})
-		},
-	}
-}
-
 func (s *appState) telegramApp() (tgapp.App, error) {
 	cfg, err := s.loadConfig()
 	if err != nil {
@@ -1087,12 +1059,26 @@ func (s *appState) telegramApp() (tgapp.App, error) {
 		Config:         cfg,
 		Profile:        profileName,
 		Paths:          paths,
-		Secrets:        secrets.NewStore(),
+		Secrets:        s.secrets(),
 		FloodWaitLimit: s.wait,
 		In:             s.in,
 		Out:            s.out,
 		Err:            s.err,
 	}, nil
+}
+
+func (s *appState) secrets() secrets.Store {
+	if s.secretStore != nil {
+		return s.secretStore
+	}
+	return secrets.NewStore()
+}
+
+func (s *appState) secretBackendInfo() (string, bool) {
+	if s.secretBackendConfigured {
+		return s.secretBackend, s.secretBackendSupported
+	}
+	return secrets.Backend()
 }
 
 func (s *appState) writer() output.Writer {

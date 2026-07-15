@@ -100,3 +100,16 @@ func TestResolveMissingPeer(t *testing.T) {
 		t.Fatal("Resolve succeeded, want error")
 	}
 }
+
+func TestLoadRejectsCorruptCache(t *testing.T) {
+	store := New(t.TempDir(), "test")
+	if err := os.MkdirAll(filepath.Dir(store.Path()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.Path(), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(); err == nil {
+		t.Fatal("Load accepted corrupt peer cache")
+	}
+}

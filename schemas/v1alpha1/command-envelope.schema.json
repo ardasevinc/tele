@@ -375,17 +375,36 @@
     },
     "doctor": {
       "type": "object",
-      "required": ["version", "profile", "config", "data", "config_mode_ok", "keychain"],
+      "required": ["ok", "version", "commit", "profile", "config_path", "data_path", "checks"],
       "properties": {
+		"ok": { "type": "boolean" },
         "version": { "type": "string" },
+		"commit": { "type": "string" },
         "profile": { "type": "string" },
-        "config": { "type": "string" },
-        "data": { "type": "string" },
-        "config_mode_ok": { "type": "boolean" },
-        "config_mode_error": { "type": "string" },
-        "keychain": { "type": "string" }
+		"config_path": { "type": "string" },
+		"data_path": { "type": "string" },
+		"executable": { "type": "string" },
+		"installed_path": { "type": "string" },
+		"checks": {
+		  "type": "array",
+		  "minItems": 1,
+		  "items": { "$ref": "#/$defs/doctor-check" }
+		}
       },
       "additionalProperties": false
+	},
+	"doctor-check": {
+	  "type": "object",
+	  "required": ["name", "status", "message"],
+	  "properties": {
+		"name": {
+		  "enum": ["config", "config_permissions", "profile", "api_id", "secret_store", "api_hash", "session_key", "session_file", "session_decryption", "peer_cache", "binary", "connectivity", "authorization"]
+		},
+		"status": { "enum": ["pass", "warning", "failed", "skipped"] },
+		"message": { "type": "string", "minLength": 1 },
+		"details": { "type": "object" }
+	  },
+	  "additionalProperties": false
     }
   }
 }

@@ -10,17 +10,40 @@ It uses Telegram's MTProto API through a user account, not the Telegram Bot API.
 The v1 alpha is intentionally bounded and explicit: auth, profile-aware local
 config, read/search/export, inbox triage, and opt-in message mutations.
 
-## Status
+## Status and support
 
-Early alpha. macOS is the first supported secret-storage target. API hashes and
-the session-encryption key are stored in Keychain; encrypted MTProto session
-bytes live under the profile data directory.
+Early alpha. Commands and machine schemas may change to correct unsafe or
+misleading behavior before v1.
 
-## Install from source
+| Platform | Status | Secret storage |
+| --- | --- | --- |
+| macOS arm64/amd64 | supported alpha | macOS Keychain |
+| Linux arm64/amd64 | preview build only | not implemented yet |
+| Windows amd64 | compile-smoke only | not implemented |
+
+On macOS, API hashes and the session-encryption key are stored in Keychain;
+encrypted MTProto session bytes live under the profile data directory. tele does
+not fall back to plaintext secrets on unsupported platforms.
+
+## Install
+
+Homebrew on macOS:
+
+```sh
+brew install ardasevinc/tap/tele
+```
+
+Release archives and checksums are attached to each GitHub release. Verify the
+archive checksum before installing the binary.
+
+From source with the Go version declared in `go.mod`:
 
 ```sh
 go install github.com/ardasevinc/tele/cmd/tele@latest
 ```
+
+For a local checkout, `just install` stamps the current commit, installs to
+`GOBIN` (or `GOPATH/bin`), and prints the exact installed path and version.
 
 ## First use
 
@@ -163,3 +186,16 @@ environment-variable flags so they do not enter shell history or process argv.
 - `5`: Telegram RPC or flood-limit failure
 - `6`: local output failure
 - `7`: mutation reconciliation required; do not retry blindly
+
+## Development and releases
+
+`just gate` runs formatting, tests, race detection, vet, staticcheck,
+golangci-lint, gosec, govulncheck, module verification, macOS/Linux/Windows
+builds, and diff checks. CI runs the reproducible credential-free subset.
+
+Release archives are deterministic, checksummed, and provenance-attested. See
+[`docs/releasing.md`](docs/releasing.md) for the tag and verification contract,
+[`SECURITY.md`](SECURITY.md) for private vulnerability reporting, and
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for development boundaries.
+
+tele is available under the [MIT License](LICENSE).

@@ -185,19 +185,29 @@ func TestConfigGetUsesMachineEnvelopeAndTypedJSONL(t *testing.T) {
 				if envelope["schema_version"] != output.SchemaVersion {
 					t.Fatalf("schema_version = %v", envelope["schema_version"])
 				}
+				meta, ok := envelope["meta"].(map[string]any)
+				if !ok || meta["command"] != "tele config get" || meta["tele_version"] == "" {
+					t.Fatalf("provenance meta = %#v", envelope["meta"])
+				}
 				return
 			}
 			lines := bytes.Split(bytes.TrimSpace(out.Bytes()), []byte("\n"))
 			if len(lines) != test.wantLines {
 				t.Fatalf("output has %d lines, want %d:\n%s", len(lines), test.wantLines, out.String())
 			}
-			for _, line := range lines {
+			for i, line := range lines {
 				var record map[string]any
 				if err := json.Unmarshal(line, &record); err != nil {
 					t.Fatalf("invalid machine line %q: %v", line, err)
 				}
 				if record["schema_version"] != output.SchemaVersion {
 					t.Fatalf("schema_version = %v", record["schema_version"])
+				}
+				if i == 0 {
+					meta, ok := record["meta"].(map[string]any)
+					if !ok || meta["command"] != "tele config get" || meta["tele_version"] == "" {
+						t.Fatalf("JSONL provenance meta = %#v", record["meta"])
+					}
 				}
 			}
 		})

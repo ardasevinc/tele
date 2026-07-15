@@ -83,6 +83,7 @@ func (w Writer) Warn(format string, args ...any) {
 
 type ErrorResponse struct {
 	SchemaVersion string    `json:"schema_version"`
+	Meta          *Meta     `json:"meta,omitempty"`
 	Error         ErrorBody `json:"error"`
 }
 
@@ -106,6 +107,8 @@ type mutationFailure interface {
 }
 
 type Meta struct {
+	Command     string         `json:"command"`
+	TeleVersion string         `json:"tele_version"`
 	Profile     string         `json:"profile"`
 	AccountID   int64          `json:"account_id,omitempty"`
 	PeerRef     string         `json:"peer_ref,omitempty"`
@@ -252,6 +255,9 @@ func ExitCodeFor(code string) int {
 }
 
 func ErrorRecordFrom(err error) Record {
-	response := ErrorFrom(err)
-	return Record{SchemaVersion: SchemaVersion, Type: "error", Error: &response.Error}
+	return ErrorRecord(ErrorFrom(err))
+}
+
+func ErrorRecord(response ErrorResponse) Record {
+	return Record{SchemaVersion: SchemaVersion, Type: "error", Meta: response.Meta, Error: &response.Error}
 }

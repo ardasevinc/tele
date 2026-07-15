@@ -53,6 +53,7 @@ type appState struct {
 	verbose  bool
 	readOnly bool
 	dryRun   bool
+	command  string
 
 	in  io.Reader
 	out io.Writer
@@ -60,7 +61,7 @@ type appState struct {
 }
 
 func Execute(ctx context.Context, args []string) error {
-	state := &appState{in: os.Stdin, out: os.Stdout, err: os.Stderr}
+	state := &appState{in: os.Stdin, out: os.Stdout, err: os.Stderr, command: "tele"}
 	cmd := rootCommand(ctx, state)
 	cmd.SetArgs(args)
 	cmd.SetIn(os.Stdin)
@@ -68,14 +69,17 @@ func Execute(ctx context.Context, args []string) error {
 	cmd.SetErr(os.Stderr)
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		w := state.writer()
+		response := output.ErrorFrom(err)
+		meta := state.meta(0, "", nil)
+		response.Meta = &meta
 		if state.jsonl {
-			_ = w.JSON(output.ErrorRecordFrom(err))
+			_ = w.JSON(output.ErrorRecord(response))
 		} else if state.json {
-			_ = w.JSON(output.ErrorFrom(err))
+			_ = w.JSON(response)
 		} else {
 			_, _ = fmt.Fprintln(state.err, "error:", safeHuman(err.Error()))
 		}
-		return exitError{code: output.ErrorFrom(err).Error.ExitCode, err: err}
+		return exitError{code: response.Error.ExitCode, err: err}
 	}
 	return nil
 }
@@ -88,6 +92,7 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 		SilenceErrors: true,
 		Version:       buildinfo.Version + " (" + buildinfo.Commit + ")",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			s.command = cmd.CommandPath()
 			if s.json && s.jsonl {
 				return fmt.Errorf("--json and --jsonl are mutually exclusive")
 			}
@@ -1081,6 +1086,8 @@ func previewMutation(s *appState, ctx context.Context, action, peerRef string, m
 
 func (s *appState) meta(limit int, peerRef string, sideEffects []string) output.Meta {
 	meta := output.NewMeta(s.profileName())
+	meta.Command = s.command
+	meta.TeleVersion = buildinfo.Version
 	meta.Limit = limit
 	meta.PeerRef = peerRef
 	meta.SideEffects = sideEffects
@@ -1114,6 +1121,8 @@ func (s *appState) telegramMeta(ctx context.Context, app tgapp.App, limit int, p
 
 func metaFromStatus(s *appState, status tgapp.AuthStatus) output.Meta {
 	meta := output.NewMeta(firstNonEmpty(status.Profile, s.profileName()))
+	meta.Command = s.command
+	meta.TeleVersion = buildinfo.Version
 	if status.Account != nil {
 		meta.AccountID = status.Account.ID
 	}

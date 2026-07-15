@@ -68,7 +68,9 @@ func Execute(ctx context.Context, args []string) error {
 	cmd.SetErr(os.Stderr)
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		w := state.writer()
-		if state.json || state.jsonl {
+		if state.jsonl {
+			_ = w.JSON(output.ErrorRecordFrom(err))
+		} else if state.json {
 			_ = w.JSON(output.ErrorFrom(err))
 		} else {
 			_, _ = fmt.Fprintln(state.err, "error:", err)
@@ -85,6 +87,12 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       buildinfo.Version + " (" + buildinfo.Commit + ")",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if s.json && s.jsonl {
+				return fmt.Errorf("--json and --jsonl are mutually exclusive")
+			}
+			return nil
+		},
 	}
 	cmd.PersistentFlags().StringVar(&s.cfgPath, "config", "", "config file path")
 	cmd.PersistentFlags().StringVar(&s.profile, "profile", "", "profile name")
@@ -423,9 +431,6 @@ func exportCommand(s *appState) *cobra.Command {
 				return err
 			}
 			limit = s.defaultLimit(limit)
-			if format == "jsonl" {
-				s.jsonl = true
-			}
 			opts := tgapp.ReadOptions{Peer: args[0], Limit: limit, Chronological: format == "transcript", Cursor: cursor}
 			if since != "" {
 				opts.Since, err = parseTimeFilter(since, time.Now())
@@ -445,8 +450,11 @@ func exportCommand(s *appState) *cobra.Command {
 			}
 			meta := s.telegramMeta(cmd.Context(), app, limit, args[0], nil)
 			applyRetrievalReceipt(&meta, page.Receipt)
-			if format == "jsonl" {
+			if s.json || s.jsonl {
 				return writeMessages(s, page.Items, meta)
+			}
+			if format == "jsonl" {
+				return writeMessagesWithFormat(s, page.Items, meta, output.JSONL)
 			}
 			if format == "transcript" {
 				return writeTranscript(s, page.Items, meta, app.PeerInfo(args[0]))
@@ -788,7 +796,10 @@ func configCommand(s *appState) *cobra.Command {
 				return err
 			}
 			if len(args) == 0 {
-				return s.writer().JSON(cfg)
+				view := publicConfig(cfg)
+				return writeValue(s, view, func(w output.Writer) error {
+					return w.JSON(view)
+				})
 			}
 			switch args[0] {
 			case "api-id":
@@ -1013,7 +1024,11 @@ func (s *appState) telegramApp() (tgapp.App, error) {
 }
 
 func (s *appState) writer() output.Writer {
-	format := output.Human
+	return s.writerWithDefault(output.Human)
+}
+
+func (s *appState) writerWithDefault(defaultFormat output.Format) output.Writer {
+	format := defaultFormat
 	if s.json {
 		format = output.JSON
 	}
@@ -1056,10 +1071,10 @@ func writeValue(s *appState, value any, human func(output.Writer) error) error {
 func writeValueWithMeta(s *appState, value any, meta output.Meta, human func(output.Writer) error) error {
 	w := s.writer()
 	if w.Format == output.JSON {
-		return w.JSON(output.Envelope{Meta: meta, Data: value})
+		return w.JSON(output.NewEnvelope(meta, value))
 	}
 	if w.Format == output.JSONL {
-		return w.JSON(value)
+		return w.JSONL([]any{output.MetaRecord(meta), output.DataRecord(value)})
 	}
 	return human(w)
 }
@@ -1090,14 +1105,19 @@ func previewMutation(s *appState, ctx context.Context, action, peerRef string, m
 }
 
 func writeMessages(s *appState, messages []tgapp.Message, meta output.Meta) error {
-	w := s.writer()
+	return writeMessagesWithFormat(s, messages, meta, output.Human)
+}
+
+func writeMessagesWithFormat(s *appState, messages []tgapp.Message, meta output.Meta, defaultFormat output.Format) error {
+	w := s.writerWithDefault(defaultFormat)
 	if w.Format == output.JSON {
-		return w.JSON(output.Envelope{Meta: meta, Data: messages})
+		return w.JSON(output.NewEnvelope(meta, messages))
 	}
 	if w.Format == output.JSONL {
-		items := make([]any, 0, len(messages))
+		items := make([]any, 0, len(messages)+1)
+		items = append(items, output.MetaRecord(meta))
 		for _, msg := range messages {
-			items = append(items, output.Envelope{Meta: meta, Data: msg})
+			items = append(items, output.DataRecord(msg))
 		}
 		return w.JSONL(items)
 	}
@@ -1432,6 +1452,28 @@ func displayChat(chat tgapp.Chat) string {
 		return chat.Title + " @" + chat.Username
 	}
 	return chat.Title
+}
+
+type publicConfigView struct {
+	DefaultLimit   int                          `json:"default_limit"`
+	DefaultProfile string                       `json:"default_profile"`
+	Profiles       map[string]publicProfileView `json:"profiles"`
+}
+
+type publicProfileView struct {
+	APIID int64 `json:"api_id,omitempty"`
+}
+
+func publicConfig(cfg config.Config) publicConfigView {
+	view := publicConfigView{
+		DefaultLimit:   cfg.DefaultLimit,
+		DefaultProfile: cfg.DefaultProfile,
+		Profiles:       make(map[string]publicProfileView, len(cfg.Profiles)),
+	}
+	for name, profile := range cfg.Profiles {
+		view.Profiles[name] = publicProfileView{APIID: profile.APIID}
+	}
+	return view
 }
 
 func firstNonEmpty(values ...string) string {

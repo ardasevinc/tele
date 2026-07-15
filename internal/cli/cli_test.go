@@ -3,11 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/output"
 	tgapp "github.com/ardasevinc/tele/internal/telegram"
 )
@@ -80,6 +83,91 @@ func TestReadOnlyGuardsEveryMutationCommand(t *testing.T) {
 			err := cmd.ExecuteContext(context.Background())
 			if err == nil || !strings.Contains(err.Error(), "disabled by --read-only") {
 				t.Fatalf("execute error = %v", err)
+			}
+		})
+	}
+}
+
+func TestJSONAndJSONLAreMutuallyExclusive(t *testing.T) {
+	state := &appState{in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{}}
+	cmd := rootCommand(context.Background(), state)
+	cmd.SetArgs([]string{"--json", "--jsonl", "me"})
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("execute error = %v", err)
+	}
+}
+
+func TestPublicConfigOmitsPhone(t *testing.T) {
+	view := publicConfig(config.Config{
+		DefaultLimit:   50,
+		DefaultProfile: "main",
+		Profiles: map[string]config.Profile{
+			"main": {APIID: 123, Phone: "+905555555555"},
+		},
+	})
+	b, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(b, []byte("905555555555")) || bytes.Contains(b, []byte("phone")) {
+		t.Fatalf("public config leaked phone: %s", b)
+	}
+	if !bytes.Contains(b, []byte(`"api_id":123`)) {
+		t.Fatalf("public config omitted api id: %s", b)
+	}
+}
+
+func TestConfigGetUsesMachineEnvelopeAndTypedJSONL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := config.Save(path, config.Config{
+		DefaultLimit:   50,
+		DefaultProfile: "main",
+		Profiles:       map[string]config.Profile{"main": {APIID: 123, Phone: "+905555555555"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name      string
+		flag      string
+		wantLines int
+	}{
+		{name: "json", flag: "--json"},
+		{name: "jsonl", flag: "--jsonl", wantLines: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var out bytes.Buffer
+			state := &appState{in: strings.NewReader(""), out: &out, err: &bytes.Buffer{}}
+			cmd := rootCommand(context.Background(), state)
+			cmd.SetArgs([]string{"--config", path, test.flag, "config", "get"})
+			if err := cmd.ExecuteContext(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(out.Bytes(), []byte("905555555555")) || bytes.Contains(out.Bytes(), []byte(`"Phone"`)) {
+				t.Fatalf("config get leaked phone: %s", out.String())
+			}
+			if test.flag == "--json" {
+				var envelope map[string]any
+				if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
+					t.Fatalf("invalid JSON output: %v", err)
+				}
+				if envelope["schema_version"] != output.SchemaVersion {
+					t.Fatalf("schema_version = %v", envelope["schema_version"])
+				}
+				return
+			}
+			lines := bytes.Split(bytes.TrimSpace(out.Bytes()), []byte("\n"))
+			if len(lines) != test.wantLines {
+				t.Fatalf("output has %d lines, want %d:\n%s", len(lines), test.wantLines, out.String())
+			}
+			for _, line := range lines {
+				var record map[string]any
+				if err := json.Unmarshal(line, &record); err != nil {
+					t.Fatalf("invalid machine line %q: %v", line, err)
+				}
+				if record["schema_version"] != output.SchemaVersion {
+					t.Fatalf("schema_version = %v", record["schema_version"])
+				}
 			}
 		})
 	}

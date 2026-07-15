@@ -15,6 +15,8 @@ import (
 type Format string
 
 const (
+	SchemaVersion = "tele/v1alpha1"
+
 	Human Format = "human"
 	JSON  Format = "json"
 	JSONL Format = "jsonl"
@@ -39,7 +41,9 @@ func (w Writer) Print(v any) error {
 
 func (w Writer) JSON(v any) error {
 	enc := json.NewEncoder(w.Out)
-	enc.SetIndent("", "  ")
+	if w.Format != JSONL {
+		enc.SetIndent("", "  ")
+	}
 	return enc.Encode(v)
 }
 
@@ -68,7 +72,8 @@ func (w Writer) Warn(format string, args ...any) {
 }
 
 type ErrorResponse struct {
-	Error ErrorBody `json:"error"`
+	SchemaVersion string    `json:"schema_version"`
+	Error         ErrorBody `json:"error"`
 }
 
 type ErrorBody struct {
@@ -111,8 +116,29 @@ type RetrievalMeta struct {
 }
 
 type Envelope struct {
-	Meta Meta `json:"meta"`
-	Data any  `json:"data"`
+	SchemaVersion string `json:"schema_version"`
+	Meta          Meta   `json:"meta"`
+	Data          any    `json:"data"`
+}
+
+type Record struct {
+	SchemaVersion string     `json:"schema_version"`
+	Type          string     `json:"type"`
+	Meta          *Meta      `json:"meta,omitempty"`
+	Data          any        `json:"data,omitempty"`
+	Error         *ErrorBody `json:"error,omitempty"`
+}
+
+func NewEnvelope(meta Meta, data any) Envelope {
+	return Envelope{SchemaVersion: SchemaVersion, Meta: meta, Data: data}
+}
+
+func MetaRecord(meta Meta) Record {
+	return Record{SchemaVersion: SchemaVersion, Type: "meta", Meta: &meta}
+}
+
+func DataRecord(data any) Record {
+	return Record{SchemaVersion: SchemaVersion, Type: "data", Data: data}
 }
 
 func NewMeta(profile string) Meta {
@@ -177,6 +203,15 @@ func ErrorFrom(err error) ErrorResponse {
 		if body.Code == "command_failed" {
 			body.Code = "invalid_input"
 		}
+	case strings.Contains(msg, "unknown config key") || strings.Contains(msg, "mutually exclusive"):
+		if body.Code == "command_failed" {
+			body.Code = "invalid_input"
+		}
 	}
-	return ErrorResponse{Error: body}
+	return ErrorResponse{SchemaVersion: SchemaVersion, Error: body}
+}
+
+func ErrorRecordFrom(err error) Record {
+	response := ErrorFrom(err)
+	return Record{SchemaVersion: SchemaVersion, Type: "error", Error: &response.Error}
 }

@@ -80,3 +80,35 @@ func TestRetrievalMetaEncodesUnknownCompletenessExplicitly(t *testing.T) {
 		t.Fatalf("encoded retrieval metadata = %s", out.String())
 	}
 }
+
+func TestJSONLWriterEmitsOneCompactObjectPerLine(t *testing.T) {
+	var out bytes.Buffer
+	w := Writer{Out: &out, Format: JSONL}
+	if err := w.JSONL([]any{
+		MetaRecord(NewMeta("test")),
+		DataRecord(map[string]any{"text": "line one\nline two"}),
+		ErrorRecordFrom(errors.New("boom")),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(out.Bytes()), []byte("\n"))
+	if len(lines) != 3 {
+		t.Fatalf("JSONL emitted %d lines:\n%s", len(lines), out.String())
+	}
+	for i, line := range lines {
+		var value map[string]any
+		if err := json.Unmarshal(line, &value); err != nil {
+			t.Fatalf("line %d is not one JSON object: %q: %v", i, line, err)
+		}
+		if value["schema_version"] != SchemaVersion {
+			t.Fatalf("line %d schema_version = %v", i, value["schema_version"])
+		}
+	}
+}
+
+func TestErrorRecordIsTyped(t *testing.T) {
+	record := ErrorRecordFrom(errors.New("boom"))
+	if record.Type != "error" || record.Error == nil || record.Data != nil || record.SchemaVersion != SchemaVersion {
+		t.Fatalf("ErrorRecordFrom = %+v", record)
+	}
+}

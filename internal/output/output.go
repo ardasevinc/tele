@@ -90,12 +90,24 @@ type mutationFailure interface {
 }
 
 type Meta struct {
-	Profile     string   `json:"profile"`
-	AccountID   int64    `json:"account_id,omitempty"`
-	PeerRef     string   `json:"peer_ref,omitempty"`
-	FetchedAt   string   `json:"fetched_at"`
-	Limit       int      `json:"limit,omitempty"`
-	SideEffects []string `json:"side_effects,omitempty"`
+	Profile     string         `json:"profile"`
+	AccountID   int64          `json:"account_id,omitempty"`
+	PeerRef     string         `json:"peer_ref,omitempty"`
+	FetchedAt   string         `json:"fetched_at"`
+	Limit       int            `json:"limit,omitempty"`
+	SideEffects []string       `json:"side_effects,omitempty"`
+	Retrieval   *RetrievalMeta `json:"retrieval,omitempty"`
+}
+
+type RetrievalMeta struct {
+	RequestedCount int    `json:"requested_count"`
+	ReturnedCount  int    `json:"returned_count"`
+	Complete       *bool  `json:"complete"`
+	Truncated      bool   `json:"truncated"`
+	NextCursor     string `json:"next_cursor,omitempty"`
+	InputCursor    string `json:"input_cursor,omitempty"`
+	ServerTotal    *int   `json:"server_total,omitempty"`
+	Pages          int    `json:"pages"`
 }
 
 type Envelope struct {

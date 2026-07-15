@@ -1,12 +1,16 @@
 package telegram
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/gotd/td/tg"
 )
 
 const (
@@ -14,6 +18,7 @@ const (
 	telegramPageSize  = 100
 	maxMessageResults = 1000
 	maxDialogResults  = 500
+	maxTelegramPages  = 25
 )
 
 type RetrievalReceipt struct {
@@ -45,6 +50,153 @@ type retrievalCursor struct {
 	OffsetDate    int    `json:"offset_date,omitempty"`
 	OffsetRate    int    `json:"offset_rate,omitempty"`
 	OffsetPeerRef string `json:"offset_peer_ref,omitempty"`
+}
+
+type historyFetcher func(context.Context, *tg.MessagesGetHistoryRequest) (tg.MessagesMessagesClass, error)
+
+func readPages(ctx context.Context, input tg.InputPeerClass, peerRef string, opts ReadOptions, fetch historyFetcher) (MessagePage, error) {
+	var page MessagePage
+	if err := validateRequestedLimit(opts.Limit, maxMessageResults); err != nil {
+		return page, err
+	}
+	scope := readScope(peerRef, opts)
+	cursor, err := decodeCursor(opts.Cursor, "history", scope)
+	if err != nil {
+		return page, err
+	}
+	page.Receipt.RequestedCount = opts.Limit
+	page.Receipt.InputCursor = opts.Cursor
+	seen := make(map[int]struct{}, opts.Limit)
+	offsetID := cursor.OffsetID
+	lastRawID := 0
+	completeKnown := false
+	complete := false
+	serverInexact := false
+	for page.Receipt.Pages < maxTelegramPages && len(page.Items) < opts.Limit {
+		requestLimit := telegramPageSize
+		if remaining := opts.Limit - len(page.Items); remaining < requestLimit && opts.Since.IsZero() {
+			requestLimit = remaining
+		}
+		req := &tg.MessagesGetHistoryRequest{
+			Peer:     input,
+			OffsetID: offsetID,
+			Limit:    requestLimit,
+			MaxID:    opts.BeforeID,
+			MinID:    opts.AfterID,
+		}
+		if !opts.Until.IsZero() {
+			req.OffsetDate = int(opts.Until.Unix())
+		}
+		if opts.AroundID > 0 {
+			if opts.Cursor != "" {
+				return MessagePage{}, fmt.Errorf("--around cannot be combined with --cursor")
+			}
+			req.OffsetID = opts.AroundID
+			req.AddOffset = -(opts.Limit / 2)
+		}
+		res, err := fetch(ctx, req)
+		if err != nil {
+			return MessagePage{}, err
+		}
+		page.Receipt.Pages++
+		if total, inexact := messageResultTotal(res); total != nil {
+			page.Receipt.ServerTotal = total
+			serverInexact = serverInexact || inexact
+		}
+		classes := messageClasses(res)
+		if len(classes) == 0 {
+			completeKnown, complete = true, true
+			break
+		}
+		converted := messagesFromResult(peerRef, res)
+		crossedSince := false
+		for _, msg := range converted {
+			lastRawID = msg.ID
+			if !opts.Since.IsZero() {
+				date, parseErr := time.Parse(time.RFC3339, msg.Date)
+				if parseErr == nil && date.Before(opts.Since) {
+					crossedSince = true
+					continue
+				}
+			}
+			if _, exists := seen[msg.ID]; exists {
+				continue
+			}
+			seen[msg.ID] = struct{}{}
+			page.Items = append(page.Items, msg)
+			if len(page.Items) == opts.Limit {
+				break
+			}
+		}
+		if opts.AroundID > 0 {
+			completeKnown = false
+			break
+		}
+		if crossedSince || len(classes) < requestLimit {
+			completeKnown, complete = true, true
+			break
+		}
+		if lastRawID == 0 || lastRawID == offsetID {
+			break
+		}
+		offsetID = lastRawID
+	}
+	page.Receipt.ReturnedCount = len(page.Items)
+	if page.Receipt.ServerTotal != nil && opts.Cursor == "" && opts.Since.IsZero() && opts.AroundID == 0 && len(page.Items) >= *page.Receipt.ServerTotal {
+		completeKnown, complete = true, true
+	}
+	if serverInexact {
+		completeKnown = false
+	}
+	if completeKnown {
+		page.Receipt.Complete = &complete
+	}
+	if len(page.Items) >= opts.Limit && !complete && opts.AroundID == 0 {
+		incomplete := false
+		page.Receipt.Complete = &incomplete
+	}
+	page.Receipt.Truncated = page.Receipt.Complete == nil || !*page.Receipt.Complete
+	if page.Receipt.Truncated && lastRawID > 0 && opts.AroundID == 0 {
+		page.Receipt.NextCursor, err = encodeCursor(retrievalCursor{
+			Kind:     "history",
+			Scope:    scope,
+			OffsetID: lastRawID,
+		})
+		if err != nil {
+			return MessagePage{}, err
+		}
+	}
+	if opts.Chronological {
+		for i, j := 0, len(page.Items)-1; i < j; i, j = i+1, j-1 {
+			page.Items[i], page.Items[j] = page.Items[j], page.Items[i]
+		}
+	}
+	return page, nil
+}
+
+func readScope(peerRef string, opts ReadOptions) string {
+	return scopeFingerprint(
+		"history",
+		peerRef,
+		opts.Since.UTC().Format(time.RFC3339Nano),
+		opts.Until.UTC().Format(time.RFC3339Nano),
+		fmt.Sprintf("after:%d", opts.AfterID),
+		fmt.Sprintf("before:%d", opts.BeforeID),
+		fmt.Sprintf("around:%d", opts.AroundID),
+	)
+}
+
+func messageResultTotal(res tg.MessagesMessagesClass) (*int, bool) {
+	switch value := res.(type) {
+	case *tg.MessagesMessagesSlice:
+		total := value.Count
+		return &total, value.Inexact
+	case *tg.MessagesChannelMessages:
+		total := value.Count
+		return &total, value.Inexact
+	default:
+		return nil, false
+	}
 }
 
 func encodeCursor(cursor retrievalCursor) (string, error) {

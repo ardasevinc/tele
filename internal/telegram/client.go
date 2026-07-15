@@ -88,6 +88,7 @@ type ReadOptions struct {
 	BeforeID      int
 	AroundID      int
 	Chronological bool
+	Cursor        string
 }
 
 type MediaDownloadOptions struct {
@@ -385,48 +386,19 @@ type Message struct {
 	SourcePeerRef string   `json:"source_peer_ref,omitempty"`
 }
 
-func (a App) History(ctx context.Context, peerToken string, limit int) ([]Message, error) {
+func (a App) History(ctx context.Context, peerToken string, limit int) (MessagePage, error) {
 	return a.Read(ctx, ReadOptions{Peer: peerToken, Limit: limit})
 }
 
-func (a App) Read(ctx context.Context, opts ReadOptions) ([]Message, error) {
-	var out []Message
+func (a App) Read(ctx context.Context, opts ReadOptions) (MessagePage, error) {
+	var out MessagePage
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
 		input, peerRef, err := a.resolvePeer(ctx, c, opts.Peer)
 		if err != nil {
 			return err
 		}
-		req := &tg.MessagesGetHistoryRequest{
-			Peer:  input,
-			Limit: opts.Limit,
-		}
-		if !opts.Until.IsZero() {
-			req.OffsetDate = int(opts.Until.Unix())
-		}
-		if opts.AfterID > 0 {
-			req.MinID = opts.AfterID
-		}
-		if opts.BeforeID > 0 {
-			req.MaxID = opts.BeforeID
-		}
-		if opts.AroundID > 0 {
-			req.OffsetID = opts.AroundID
-			req.AddOffset = -(opts.Limit / 2)
-		}
-		res, err := c.API().MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
-			Peer:       req.Peer,
-			OffsetID:   req.OffsetID,
-			OffsetDate: req.OffsetDate,
-			AddOffset:  req.AddOffset,
-			Limit:      req.Limit,
-			MaxID:      req.MaxID,
-			MinID:      req.MinID,
-		})
-		if err != nil {
-			return err
-		}
-		out = filterMessages(messagesFromResult(peerRef.Ref, res), opts)
-		return nil
+		out, err = readPages(ctx, input, peerRef.Ref, opts, c.API().MessagesGetHistory)
+		return err
 	})
 	return out, err
 }
@@ -984,36 +956,6 @@ func safeDownloadFileName(msgID int, name string) string {
 		}
 	}, name)
 	return fmt.Sprintf("%d-%s", msgID, name)
-}
-
-func filterMessages(messages []Message, opts ReadOptions) []Message {
-	out := messages[:0]
-	for _, msg := range messages {
-		if !opts.Since.IsZero() || !opts.Until.IsZero() {
-			t, err := time.Parse(time.RFC3339, msg.Date)
-			if err == nil {
-				if !opts.Since.IsZero() && t.Before(opts.Since) {
-					continue
-				}
-				if !opts.Until.IsZero() && t.After(opts.Until) {
-					continue
-				}
-			}
-		}
-		if opts.AfterID > 0 && msg.ID <= opts.AfterID {
-			continue
-		}
-		if opts.BeforeID > 0 && msg.ID >= opts.BeforeID {
-			continue
-		}
-		out = append(out, msg)
-	}
-	if opts.Chronological {
-		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-			out[i], out[j] = out[j], out[i]
-		}
-	}
-	return out
 }
 
 func mutationResult(action, peerRef string, msgID int, handle string) MutationResult {

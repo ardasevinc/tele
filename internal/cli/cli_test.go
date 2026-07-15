@@ -110,6 +110,23 @@ func TestWriteMutationResultPreservesConfirmedOutcomeOnOutputFailure(t *testing.
 	}
 }
 
+func TestRetrievalSummaryReportsUnknownCompleteness(t *testing.T) {
+	meta := output.Meta{Retrieval: &output.RetrievalMeta{
+		RequestedCount: 100,
+		ReturnedCount:  50,
+		Complete:       nil,
+		Truncated:      true,
+		NextCursor:     "cursor-1",
+		Pages:          25,
+	}}
+	got := retrievalSummary(meta)
+	for _, want := range []string{"requested=100", "returned=50", "complete=unknown", "truncated=true", "pages=25", "next_cursor=cursor-1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("retrievalSummary missing %q: %s", want, got)
+		}
+	}
+}
+
 func TestWriteTranscript(t *testing.T) {
 	var out bytes.Buffer
 	state := &appState{out: &out}

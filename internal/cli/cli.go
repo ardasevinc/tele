@@ -305,6 +305,7 @@ func readCommand(s *appState) *cobra.Command {
 	var beforeID int
 	var aroundID int
 	var chronological bool
+	var cursor string
 	cmd := &cobra.Command{
 		Use:     "read <peer>",
 		Aliases: []string{"history"},
@@ -344,15 +345,17 @@ func readCommand(s *appState) *cobra.Command {
 			}
 			w := s.writer()
 			w.Warn("read may mark Telegram messages read")
-			messages, err := app.Read(cmd.Context(), opts)
+			opts.Cursor = cursor
+			page, err := app.Read(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}
 			meta := s.telegramMeta(cmd.Context(), app, limit, args[0], []string{"may_mark_read"})
+			applyRetrievalReceipt(&meta, page.Receipt)
 			if format == "transcript" && !s.json && !s.jsonl {
-				return writeTranscript(s, messages, meta, app.PeerInfo(args[0]))
+				return writeTranscript(s, page.Items, meta, app.PeerInfo(args[0]))
 			}
-			return writeMessages(s, messages, meta)
+			return writeMessages(s, page.Items, meta)
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum messages to return")
@@ -363,6 +366,7 @@ func readCommand(s *appState) *cobra.Command {
 	cmd.Flags().IntVar(&beforeID, "before-id", 0, "only include messages before this id")
 	cmd.Flags().IntVar(&aroundID, "around", 0, "fetch context around this message id")
 	cmd.Flags().BoolVar(&chronological, "chronological", false, "print oldest messages first")
+	cmd.Flags().StringVar(&cursor, "cursor", "", "opaque cursor returned by a previous read")
 	return cmd
 }
 
@@ -396,6 +400,9 @@ func searchCommand(s *appState) *cobra.Command {
 func exportCommand(s *appState) *cobra.Command {
 	var limit int
 	var format string
+	var cursor string
+	var since string
+	var until string
 	cmd := &cobra.Command{
 		Use:   "export <peer>",
 		Short: "Bounded export of recent messages",
@@ -413,17 +420,35 @@ func exportCommand(s *appState) *cobra.Command {
 				s.jsonl = true
 			}
 			s.writer().Warn("export reads may mark Telegram messages read")
-			messages, err := app.Read(cmd.Context(), tgapp.ReadOptions{Peer: args[0], Limit: limit, Chronological: format == "transcript"})
+			opts := tgapp.ReadOptions{Peer: args[0], Limit: limit, Chronological: format == "transcript", Cursor: cursor}
+			if since != "" {
+				opts.Since, err = parseTimeFilter(since, time.Now())
+				if err != nil {
+					return err
+				}
+			}
+			if until != "" {
+				opts.Until, err = parseTimeFilter(until, time.Now())
+				if err != nil {
+					return err
+				}
+			}
+			page, err := app.Read(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}
+			meta := s.telegramMeta(cmd.Context(), app, limit, args[0], []string{"may_mark_read"})
+			applyRetrievalReceipt(&meta, page.Receipt)
 			if format == "jsonl" {
-				return writeMessages(s, messages, s.telegramMeta(cmd.Context(), app, limit, args[0], []string{"may_mark_read"}))
+				return writeMessages(s, page.Items, meta)
 			}
 			if format == "transcript" {
-				return writeTranscript(s, messages, s.telegramMeta(cmd.Context(), app, limit, args[0], []string{"may_mark_read"}), app.PeerInfo(args[0]))
+				return writeTranscript(s, page.Items, meta, app.PeerInfo(args[0]))
 			}
-			for _, msg := range messages {
+			if _, err := fmt.Fprintln(s.out, retrievalSummary(meta)); err != nil {
+				return err
+			}
+			for _, msg := range page.Items {
 				if _, err := fmt.Fprintf(s.out, "- %s #%d %s\n", msg.Date, msg.ID, strings.TrimSpace(msg.Text)); err != nil {
 					return err
 				}
@@ -433,6 +458,9 @@ func exportCommand(s *appState) *cobra.Command {
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum messages to export")
 	cmd.Flags().StringVar(&format, "format", "jsonl", "export format: jsonl, markdown, or transcript")
+	cmd.Flags().StringVar(&cursor, "cursor", "", "opaque cursor returned by a previous export")
+	cmd.Flags().StringVar(&since, "since", "", "only include messages since duration/date/RFC3339")
+	cmd.Flags().StringVar(&until, "until", "", "only include messages until duration/date/RFC3339")
 	return cmd
 }
 
@@ -1060,6 +1088,11 @@ func writeMessages(s *appState, messages []tgapp.Message, meta output.Meta) erro
 		}
 		return w.JSONL(items)
 	}
+	if meta.Retrieval != nil {
+		if _, err := fmt.Fprintln(w.Out, retrievalSummary(meta)); err != nil {
+			return err
+		}
+	}
 	for _, msg := range messages {
 		text := strings.TrimSpace(msg.Text)
 		if text == "" {
@@ -1095,6 +1128,11 @@ func writeTranscript(s *appState, messages []tgapp.Message, meta output.Meta, pe
 	}
 	if meta.Limit > 0 {
 		if _, err := fmt.Fprintf(w.Out, "limit: %d\n", meta.Limit); err != nil {
+			return err
+		}
+	}
+	if meta.Retrieval != nil {
+		if _, err := fmt.Fprintf(w.Out, "%s\n", retrievalSummary(meta)); err != nil {
 			return err
 		}
 	}
@@ -1146,6 +1184,44 @@ func (s *appState) meta(limit int, peerRef string, sideEffects []string) output.
 	meta.PeerRef = peerRef
 	meta.SideEffects = sideEffects
 	return meta
+}
+
+func applyRetrievalReceipt(meta *output.Meta, receipt tgapp.RetrievalReceipt) {
+	meta.Retrieval = &output.RetrievalMeta{
+		RequestedCount: receipt.RequestedCount,
+		ReturnedCount:  receipt.ReturnedCount,
+		Complete:       receipt.Complete,
+		Truncated:      receipt.Truncated,
+		NextCursor:     receipt.NextCursor,
+		InputCursor:    receipt.InputCursor,
+		ServerTotal:    receipt.ServerTotal,
+		Pages:          receipt.Pages,
+	}
+}
+
+func retrievalSummary(meta output.Meta) string {
+	if meta.Retrieval == nil {
+		return "retrieval: unavailable"
+	}
+	retrieval := meta.Retrieval
+	complete := "unknown"
+	if retrieval.Complete != nil {
+		complete = strconv.FormatBool(*retrieval.Complete)
+	}
+	parts := []string{
+		fmt.Sprintf("requested=%d", retrieval.RequestedCount),
+		fmt.Sprintf("returned=%d", retrieval.ReturnedCount),
+		"complete=" + complete,
+		fmt.Sprintf("truncated=%t", retrieval.Truncated),
+		fmt.Sprintf("pages=%d", retrieval.Pages),
+	}
+	if retrieval.ServerTotal != nil {
+		parts = append(parts, fmt.Sprintf("server_total=%d", *retrieval.ServerTotal))
+	}
+	if retrieval.NextCursor != "" {
+		parts = append(parts, "next_cursor="+retrieval.NextCursor)
+	}
+	return "retrieval: " + strings.Join(parts, " ")
 }
 
 func peerLabel(peer tgapp.PeerInfo) string {

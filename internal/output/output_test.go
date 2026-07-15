@@ -1,6 +1,8 @@
 package output
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -62,5 +64,19 @@ func TestErrorFromClassifiesConfirmedOutputFailure(t *testing.T) {
 	got := ErrorFrom(testMutationError{outcome: "confirmed"}).Error
 	if got.Code != "mutation_confirmed_output_failed" || got.Outcome != "confirmed" {
 		t.Fatalf("ErrorFrom = %+v", got)
+	}
+}
+
+func TestRetrievalMetaEncodesUnknownCompletenessExplicitly(t *testing.T) {
+	var out bytes.Buffer
+	err := json.NewEncoder(&out).Encode(Envelope{Meta: Meta{
+		Profile:   "test",
+		Retrieval: &RetrievalMeta{RequestedCount: 10, ReturnedCount: 3, Complete: nil, Truncated: true, Pages: 1},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"complete":null`)) {
+		t.Fatalf("encoded retrieval metadata = %s", out.String())
 	}
 }

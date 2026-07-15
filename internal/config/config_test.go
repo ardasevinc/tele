@@ -1,8 +1,11 @@
 package config
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -16,6 +19,38 @@ func TestLoadDefaultsWhenMissing(t *testing.T) {
 	}
 	if cfg.DefaultProfile != DefaultProfile {
 		t.Fatalf("DefaultProfile = %q, want %q", cfg.DefaultProfile, DefaultProfile)
+	}
+}
+
+func TestUpdateSerializesConcurrentConfigMutations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	const workers = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			name := fmt.Sprintf("profile-%02d", i)
+			errs <- Update(context.Background(), path, func(cfg *Config) error {
+				_, err := cfg.EnsureProfile(name)
+				return err
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Profiles) != workers {
+		t.Fatalf("profiles = %d, want %d", len(cfg.Profiles), workers)
 	}
 }
 

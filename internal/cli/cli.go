@@ -841,53 +841,62 @@ func configCommand(s *appState) *cobra.Command {
 			if valueEnv != "" && args[0] != "api-hash" {
 				return fmt.Errorf("--value-env is only valid for api-hash")
 			}
-			cfg, err := s.loadConfig()
-			if err != nil {
-				return err
-			}
-			profileName, profile, err := cfg.ResolveProfile(s.profile)
-			if err != nil {
-				return err
-			}
-			_, _ = cfg.EnsureProfile(profileName)
-			switch args[0] {
-			case "api-id":
-				if len(args) != 2 {
-					return fmt.Errorf("api-id requires a value")
-				}
-				id, err := tgapp.ParseAPIID(args[1])
-				if err != nil {
-					return err
-				}
-				profile.APIID = id
-				cfg.Profiles[profileName] = profile
-			case "api-hash":
+			if args[0] == "api-hash" {
 				if len(args) != 1 {
 					return fmt.Errorf("api-hash must not be passed inline; use the hidden prompt or --value-env")
 				}
 				hash := envValue(valueEnv)
+				var err error
 				if hash == "" {
 					hash, err = readSecret(s.in, s.err, "api_hash: ")
 					if err != nil {
 						return err
 					}
 				}
+				cfg, err := s.loadConfig()
+				if err != nil {
+					return err
+				}
+				profileName, _, err := cfg.ResolveProfile(s.profile)
+				if err != nil {
+					return err
+				}
 				app := tgapp.App{Config: cfg, Profile: profileName, Paths: mustPaths(), Secrets: secrets.NewStore(), In: s.in, Out: s.out, Err: s.err}
 				if err := app.SetAPIHash(cmd.Context(), hash); err != nil {
 					return err
 				}
-			case "default-profile":
-				if len(args) != 2 {
-					return fmt.Errorf("default-profile requires a value")
+			} else if err := config.Update(cmd.Context(), s.cfgPath, func(cfg *config.Config) error {
+				switch args[0] {
+				case "api-id":
+					if len(args) != 2 {
+						return fmt.Errorf("api-id requires a value")
+					}
+					id, err := tgapp.ParseAPIID(args[1])
+					if err != nil {
+						return err
+					}
+					profileName, profile, err := cfg.ResolveProfile(s.profile)
+					if err != nil {
+						return err
+					}
+					if _, err := cfg.EnsureProfile(profileName); err != nil {
+						return err
+					}
+					profile.APIID = id
+					cfg.Profiles[profileName] = profile
+				case "default-profile":
+					if len(args) != 2 {
+						return fmt.Errorf("default-profile requires a value")
+					}
+					if _, err := cfg.EnsureProfile(args[1]); err != nil {
+						return err
+					}
+					cfg.DefaultProfile = args[1]
+				default:
+					return fmt.Errorf("unknown config key %q", args[0])
 				}
-				if _, err := cfg.EnsureProfile(args[1]); err != nil {
-					return err
-				}
-				cfg.DefaultProfile = args[1]
-			default:
-				return fmt.Errorf("unknown config key %q", args[0])
-			}
-			if err := s.saveConfig(cfg); err != nil {
+				return nil
+			}); err != nil {
 				return err
 			}
 			return writeValue(s, map[string]any{"ok": true}, func(w output.Writer) error {
@@ -934,15 +943,13 @@ func profilesCommand(s *appState) *cobra.Command {
 		Short: "Create or select the default profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := s.loadConfig()
-			if err != nil {
-				return err
-			}
-			if _, err := cfg.EnsureProfile(args[0]); err != nil {
-				return err
-			}
-			cfg.DefaultProfile = args[0]
-			if err := s.saveConfig(cfg); err != nil {
+			if err := config.Update(cmd.Context(), s.cfgPath, func(cfg *config.Config) error {
+				if _, err := cfg.EnsureProfile(args[0]); err != nil {
+					return err
+				}
+				cfg.DefaultProfile = args[0]
+				return nil
+			}); err != nil {
 				return err
 			}
 			return writeValue(s, map[string]string{"default_profile": args[0]}, func(w output.Writer) error {
@@ -1064,10 +1071,6 @@ func (s *appState) loadConfig() (config.Config, error) {
 		cfg.Profiles = map[string]config.Profile{}
 	}
 	return cfg, nil
-}
-
-func (s *appState) saveConfig(cfg config.Config) error {
-	return config.Save(s.cfgPath, cfg)
 }
 
 func (s *appState) defaultLimit(value int) int {

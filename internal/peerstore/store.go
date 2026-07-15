@@ -1,6 +1,7 @@
 package peerstore
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,24 +66,26 @@ func (s Store) Save(cache Cache) error {
 	return privatefs.AtomicWriteFile(s.path, b)
 }
 
-func (s Store) Upsert(peers []Peer) error {
-	cache, err := s.Load()
-	if err != nil {
-		return err
-	}
-	byRef := map[string]Peer{}
-	for _, p := range cache.Peers {
-		byRef[p.Ref] = p
-	}
-	for _, p := range peers {
-		p.UpdatedAt = time.Now().UTC()
-		byRef[p.Ref] = p
-	}
-	cache.Peers = cache.Peers[:0]
-	for _, p := range byRef {
-		cache.Peers = append(cache.Peers, p)
-	}
-	return s.Save(cache)
+func (s Store) Upsert(ctx context.Context, peers []Peer) error {
+	return privatefs.WithLock(ctx, s.path+".lock", func() error {
+		cache, err := s.Load()
+		if err != nil {
+			return err
+		}
+		byRef := map[string]Peer{}
+		for _, p := range cache.Peers {
+			byRef[p.Ref] = p
+		}
+		for _, p := range peers {
+			p.UpdatedAt = time.Now().UTC()
+			byRef[p.Ref] = p
+		}
+		cache.Peers = cache.Peers[:0]
+		for _, p := range byRef {
+			cache.Peers = append(cache.Peers, p)
+		}
+		return s.Save(cache)
+	})
 }
 
 func (s Store) Resolve(token string) (tg.InputPeerClass, Peer, error) {

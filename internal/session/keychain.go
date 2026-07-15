@@ -30,6 +30,16 @@ func (s KeychainStorage) LoadSession(ctx context.Context) ([]byte, error) {
 	if s.Path == "" {
 		return nil, fmt.Errorf("session storage path is required")
 	}
+	var data []byte
+	err := privatefs.WithLock(ctx, s.Path+".lock", func() error {
+		var err error
+		data, err = s.loadSession(ctx)
+		return err
+	})
+	return data, err
+}
+
+func (s KeychainStorage) loadSession(ctx context.Context) ([]byte, error) {
 	if err := privatefs.RepairFile(s.Path); err != nil {
 		return nil, err
 	}
@@ -54,6 +64,12 @@ func (s KeychainStorage) StoreSession(ctx context.Context, data []byte) error {
 	if s.Path == "" {
 		return fmt.Errorf("session storage path is required")
 	}
+	return privatefs.WithLock(ctx, s.Path+".lock", func() error {
+		return s.storeSession(ctx, data)
+	})
+}
+
+func (s KeychainStorage) storeSession(ctx context.Context, data []byte) error {
 	key, err := s.key(ctx, true)
 	if err != nil {
 		return err
@@ -66,6 +82,15 @@ func (s KeychainStorage) StoreSession(ctx context.Context, data []byte) error {
 }
 
 func (s KeychainStorage) Delete(ctx context.Context) error {
+	if s.Path == "" {
+		return s.delete(ctx)
+	}
+	return privatefs.WithLock(ctx, s.Path+".lock", func() error {
+		return s.delete(ctx)
+	})
+}
+
+func (s KeychainStorage) delete(ctx context.Context) error {
 	if s.Path != "" {
 		if err := os.Remove(s.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err

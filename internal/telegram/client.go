@@ -378,7 +378,7 @@ func (a App) dialogs(ctx context.Context, opts ChatOptions, mode string) (ChatPa
 			}
 			_, peers := chatsFromDialogs(res)
 			if len(peers) > 0 {
-				if saveErr := store.Upsert(peers); saveErr != nil {
+				if saveErr := store.Upsert(ctx, peers); saveErr != nil {
 					return nil, saveErr
 				}
 			}
@@ -451,7 +451,7 @@ func (a App) Read(ctx context.Context, opts ReadOptions) (MessagePage, error) {
 			}
 			_, peers := messagePeerCatalog(res)
 			if len(peers) > 0 {
-				if saveErr := store.Upsert(peers); saveErr != nil {
+				if saveErr := store.Upsert(ctx, peers); saveErr != nil {
 					return nil, saveErr
 				}
 			}
@@ -510,7 +510,7 @@ func (a App) Search(ctx context.Context, opts SearchOptions) (MessagePage, error
 			}
 			_, peers := messagePeerCatalog(res)
 			if len(peers) > 0 {
-				if saveErr := store.Upsert(peers); saveErr != nil {
+				if saveErr := store.Upsert(ctx, peers); saveErr != nil {
 					return nil, saveErr
 				}
 			}

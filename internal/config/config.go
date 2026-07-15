@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -99,6 +100,26 @@ func Save(path string, cfg Config) error {
 		return err
 	}
 	return privatefs.AtomicWriteFile(path, b)
+}
+
+func Update(ctx context.Context, path string, update func(*Config) error) error {
+	if path == "" {
+		paths, err := DefaultPaths()
+		if err != nil {
+			return err
+		}
+		path = paths.Config
+	}
+	return privatefs.WithLock(ctx, path+".lock", func() error {
+		cfg, err := Load(path)
+		if err != nil {
+			return err
+		}
+		if err := update(&cfg); err != nil {
+			return err
+		}
+		return Save(path, cfg)
+	})
 }
 
 func ValidateProfileName(name string) error {

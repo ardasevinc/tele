@@ -1,8 +1,11 @@
 package peerstore
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -16,7 +19,7 @@ func TestStoreRoundTripAndResolve(t *testing.T) {
 		Title:      "Ada Lovelace",
 		Username:   "ada",
 	}
-	if err := store.Upsert([]Peer{peer}); err != nil {
+	if err := store.Upsert(context.Background(), []Peer{peer}); err != nil {
 		t.Fatal(err)
 	}
 	input, got, err := store.Resolve("@ada")
@@ -28,6 +31,36 @@ func TestStoreRoundTripAndResolve(t *testing.T) {
 	}
 	if input.TypeName() != "inputPeerUser" {
 		t.Fatalf("input type = %q, want inputPeerUser", input.TypeName())
+	}
+}
+
+func TestUpsertMergesConcurrentWriters(t *testing.T) {
+	store := New(t.TempDir(), "test")
+	const workers = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- store.Upsert(context.Background(), []Peer{{
+				Ref: fmt.Sprintf("user:%d", i+1), Kind: "user", ID: int64(i + 1), AccessHash: int64(i + 100),
+			}})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	cache, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cache.Peers) != workers {
+		t.Fatalf("peers = %d, want %d", len(cache.Peers), workers)
 	}
 }
 

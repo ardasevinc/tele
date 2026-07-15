@@ -3,8 +3,10 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/ardasevinc/tele/internal/secrets"
@@ -15,6 +17,35 @@ type missingStore struct{}
 
 func (missingStore) Get(context.Context, string, string) ([]byte, error) {
 	return nil, secrets.ErrNotFound
+}
+
+func TestConcurrentFirstSessionWritesKeepKeyAndCiphertextConsistent(t *testing.T) {
+	store := memoryStore{values: map[string][]byte{}}
+	storage := KeychainStorage{Profile: "test", Store: store, Path: filepath.Join(t.TempDir(), "session.enc")}
+	const workers = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- storage.StoreSession(context.Background(), []byte(fmt.Sprintf("session-%02d", i)))
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := storage.LoadSession(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len("session-00") {
+		t.Fatalf("session = %q", got)
+	}
 }
 
 func (missingStore) Set(context.Context, string, string, []byte) error {

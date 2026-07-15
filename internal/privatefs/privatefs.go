@@ -87,6 +87,7 @@ func AtomicReplaceFile(path string, write func(*os.File) error) (err error) {
 }
 
 func syncDir(path string) error {
+	// #nosec G304 -- caller intentionally supplies the local state directory to sync.
 	dir, err := os.Open(path)
 	if err != nil {
 		return err

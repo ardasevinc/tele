@@ -11,6 +11,7 @@ import (
 )
 
 func acquireLock(ctx context.Context, path string) (func() error, error) {
+	// #nosec G304 -- caller intentionally supplies the profile-scoped local lock path.
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, FileMode)
 	if err != nil {
 		return nil, err

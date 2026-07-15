@@ -179,6 +179,7 @@ func inspectConfig(path string, report *Report) (config.Config, bool) {
 	} else {
 		report.add("config_permissions", Pass, "config permissions are private", map[string]any{"mode": fmt.Sprintf("%04o", info.Mode().Perm())})
 	}
+	// #nosec G304 -- doctor intentionally inspects the configured local config path.
 	b, err := os.ReadFile(path)
 	if err != nil {
 		report.add("config", Fail, "config file cannot be read", nil)
@@ -243,6 +244,7 @@ func inspectPeerCache(path string, report *Report) {
 		report.add("peer_cache", Fail, "peer cache permissions are insecure", map[string]any{"mode": fmt.Sprintf("%04o", info.Mode().Perm())})
 		return
 	}
+	// #nosec G304 -- peer cache path is derived from the configured local data directory and profile.
 	b, err := os.ReadFile(path)
 	if err != nil {
 		report.add("peer_cache", Fail, "peer cache cannot be read", nil)

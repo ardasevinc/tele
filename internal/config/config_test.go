@@ -33,6 +33,29 @@ func TestSaveUsesPrivateMode(t *testing.T) {
 	}
 }
 
+func TestLoadRepairsExistingPrivateModes(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tele")
+	if err := os.Mkdir(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("default_profile = 'main'\n"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatal(err)
+	}
+	for target, want := range map[string]os.FileMode{dir: 0o700, path: 0o600} {
+		info, err := os.Stat(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("%s mode = %04o, want %04o", target, got, want)
+		}
+	}
+}
+
 func TestResolveProfileFallsBackToRootAPIID(t *testing.T) {
 	cfg := Config{
 		APIID:          123,

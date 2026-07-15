@@ -8,6 +8,8 @@ import (
 	"regexp"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/ardasevinc/tele/internal/privatefs"
 )
 
 const DefaultProfile = "default"
@@ -55,6 +57,9 @@ func Load(path string) (Config, error) {
 		}
 		path = paths.Config
 	}
+	if err := privatefs.RepairFile(path); err != nil {
+		return cfg, err
+	}
 	// #nosec G304 -- local CLI intentionally reads an explicit user config path.
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -89,14 +94,11 @@ func Save(path string, cfg Config) error {
 		}
 		path = paths.Config
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	b, err := toml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	return privatefs.AtomicWriteFile(path, b)
 }
 
 func ValidateProfileName(name string) error {

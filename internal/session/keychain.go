@@ -9,8 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
+	"github.com/ardasevinc/tele/internal/privatefs"
 	"github.com/ardasevinc/tele/internal/secrets"
 	gotdsession "github.com/gotd/td/session"
 )
@@ -29,6 +29,9 @@ type KeychainStorage struct {
 func (s KeychainStorage) LoadSession(ctx context.Context) ([]byte, error) {
 	if s.Path == "" {
 		return nil, fmt.Errorf("session storage path is required")
+	}
+	if err := privatefs.RepairFile(s.Path); err != nil {
+		return nil, err
 	}
 	ciphertext, err := os.ReadFile(s.Path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -59,10 +62,7 @@ func (s KeychainStorage) StoreSession(ctx context.Context, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(s.Path, ciphertext, 0o600)
+	return privatefs.AtomicWriteFile(s.Path, ciphertext)
 }
 
 func (s KeychainStorage) Delete(ctx context.Context) error {

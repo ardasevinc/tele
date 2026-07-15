@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/gotd/td/tg"
+
+	"github.com/ardasevinc/tele/internal/privatefs"
 )
 
 type Store struct {
@@ -40,6 +43,9 @@ func (s Store) Path() string {
 
 func (s Store) Load() (Cache, error) {
 	var cache Cache
+	if err := privatefs.RepairFile(s.path); err != nil {
+		return cache, err
+	}
 	b, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return cache, nil
@@ -51,14 +57,12 @@ func (s Store) Load() (Cache, error) {
 }
 
 func (s Store) Save(cache Cache) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return err
-	}
+	sort.Slice(cache.Peers, func(i, j int) bool { return cache.Peers[i].Ref < cache.Peers[j].Ref })
 	b, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, b, 0o600)
+	return privatefs.AtomicWriteFile(s.path, b)
 }
 
 func (s Store) Upsert(peers []Peer) error {

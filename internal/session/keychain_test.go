@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/ardasevinc/tele/internal/secrets"
@@ -71,6 +72,34 @@ func TestSessionRoundTripUsesEncryptedFileAndKeyStore(t *testing.T) {
 	}
 	if string(got) == string(mustRead(t, path)) {
 		t.Fatal("session file stored plaintext")
+	}
+}
+
+func TestLoadSessionRepairsExistingModes(t *testing.T) {
+	store := memoryStore{values: map[string][]byte{}}
+	dir := filepath.Join(t.TempDir(), "test")
+	path := filepath.Join(dir, "session.enc")
+	storage := KeychainStorage{Profile: "test", Store: store, Path: path}
+	if err := storage.StoreSession(context.Background(), []byte("session")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.LoadSession(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for target, want := range map[string]os.FileMode{dir: 0o700, path: 0o600} {
+		info, err := os.Stat(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("%s mode = %04o, want %04o", target, got, want)
+		}
 	}
 }
 

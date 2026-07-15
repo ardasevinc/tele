@@ -171,3 +171,16 @@ func TestWriteTranscript(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteTranscriptRendersResolvedGroupSpeaker(t *testing.T) {
+	var out bytes.Buffer
+	state := &appState{out: &out}
+	meta := output.Meta{Profile: "main", PeerRef: "supergroup:20", FetchedAt: "2026-05-15T11:25:34Z"}
+	messages := []tgapp.Message{{ID: 10, Date: "2026-05-13T12:01:53Z", Text: "hello", SenderPeerRef: "user:10", SenderLabel: "Alice @alice"}}
+	if err := writeTranscript(state, messages, meta, tgapp.PeerInfo{Ref: "supergroup:20", Title: "Builders"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "[10] 12:01 Alice @alice: hello") {
+		t.Fatalf("transcript did not render sender:\n%s", out.String())
+	}
+}

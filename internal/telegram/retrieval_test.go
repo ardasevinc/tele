@@ -148,6 +148,50 @@ func TestReadPagesAroundIsExplicitlyUnknown(t *testing.T) {
 	}
 }
 
+func TestSearchPagesBuildsStableGlobalCursor(t *testing.T) {
+	fetch := fakeSearch(120)
+	first, err := searchPages(context.Background(), "", SearchOptions{Query: "hello", Limit: 100}, fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 100 || first.Items[0].SourcePeerRef != "user:10" || first.Receipt.NextCursor == "" {
+		t.Fatalf("first global search page = %d items, receipt %+v", len(first.Items), first.Receipt)
+	}
+	cursor, err := decodeCursor(first.Receipt.NextCursor, "search-global", scopeFingerprint("search-global", "", "hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursor.OffsetID != 21 || cursor.OffsetPeerRef != "user:10" || cursor.OffsetRate != 77 {
+		t.Fatalf("global cursor = %+v", cursor)
+	}
+	second, err := searchPages(context.Background(), "", SearchOptions{Query: "hello", Limit: 20, Cursor: first.Receipt.NextCursor}, fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 20 || second.Items[0].ID != 20 || second.Items[19].ID != 1 {
+		t.Fatalf("second global page = %+v", second.Items)
+	}
+}
+
+func TestSearchCursorIsQueryAndScopeBound(t *testing.T) {
+	first, err := searchPages(context.Background(), "user:10", SearchOptions{Query: "hello", Limit: 10}, fakeSearch(20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, opts := range []SearchOptions{
+		{Query: "different", Limit: 10, Cursor: first.Receipt.NextCursor},
+		{Query: "hello", Peer: "user:11", Limit: 10, Cursor: first.Receipt.NextCursor},
+	} {
+		scopePeer := "user:10"
+		if opts.Peer != "" {
+			scopePeer = opts.Peer
+		}
+		if _, err := searchPages(context.Background(), scopePeer, opts, fakeSearch(20)); err == nil {
+			t.Fatalf("searchPages accepted mismatched cursor for %+v", opts)
+		}
+	}
+}
+
 func fakeHistory(total int, observe func(*tg.MessagesGetHistoryRequest)) historyFetcher {
 	return fakeHistoryWithDate(total, 0, observe)
 }
@@ -170,5 +214,23 @@ func fakeHistoryWithDate(total, fixedDate int, observe func(*tg.MessagesGetHisto
 			messages = append(messages, &tg.Message{ID: id, Date: date, PeerID: &tg.PeerUser{UserID: 1}})
 		}
 		return &tg.MessagesMessagesSlice{Count: total, Messages: messages}, nil
+	}
+}
+
+func fakeSearch(total int) searchFetcher {
+	return func(_ context.Context, cursor retrievalCursor, limit int) (tg.MessagesMessagesClass, error) {
+		start := total
+		if cursor.OffsetID > 0 {
+			start = cursor.OffsetID - 1
+		}
+		messages := make([]tg.MessageClass, 0, limit)
+		for id := start; id > 0 && len(messages) < limit; id-- {
+			messages = append(messages, &tg.Message{ID: id, Date: id, PeerID: &tg.PeerUser{UserID: 10}, Message: "hello"})
+		}
+		user := &tg.User{ID: 10, AccessHash: 100, FirstName: "Alice"}
+		user.SetFlags()
+		res := &tg.MessagesMessagesSlice{Count: total, Messages: messages, Users: []tg.UserClass{user}}
+		res.SetNextRate(77)
+		return res, nil
 	}
 }

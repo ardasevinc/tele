@@ -91,6 +91,13 @@ type ReadOptions struct {
 	Cursor        string
 }
 
+type SearchOptions struct {
+	Query  string
+	Peer   string
+	Limit  int
+	Cursor string
+}
+
 type MediaDownloadOptions struct {
 	Peer      string
 	MessageID int
@@ -375,15 +382,33 @@ func (a App) PeerInfo(token string) PeerInfo {
 }
 
 type Message struct {
-	ID            int      `json:"id"`
-	Date          string   `json:"date,omitempty"`
-	Text          string   `json:"text,omitempty"`
-	Outgoing      bool     `json:"outgoing"`
-	Post          bool     `json:"post,omitempty"`
-	Media         string   `json:"media,omitempty"`
-	Service       string   `json:"service,omitempty"`
-	SideEffects   []string `json:"side_effects,omitempty"`
-	SourcePeerRef string   `json:"source_peer_ref,omitempty"`
+	ID                   int             `json:"id"`
+	Date                 string          `json:"date,omitempty"`
+	Text                 string          `json:"text,omitempty"`
+	Outgoing             bool            `json:"outgoing"`
+	Post                 bool            `json:"post,omitempty"`
+	Media                string          `json:"media,omitempty"`
+	Service              string          `json:"service,omitempty"`
+	SideEffects          []string        `json:"side_effects,omitempty"`
+	SourcePeerRef        string          `json:"source_peer_ref,omitempty"`
+	SourcePeerLabel      string          `json:"source_peer_label,omitempty"`
+	SenderPeerRef        string          `json:"sender_peer_ref,omitempty"`
+	SenderLabel          string          `json:"sender_label,omitempty"`
+	ReplyToMessageID     int             `json:"reply_to_message_id,omitempty"`
+	ThreadID             int             `json:"thread_id,omitempty"`
+	ForumTopic           bool            `json:"forum_topic,omitempty"`
+	ForwardedFromPeerRef string          `json:"forwarded_from_peer_ref,omitempty"`
+	ForwardedFromLabel   string          `json:"forwarded_from_label,omitempty"`
+	ForwardedDate        string          `json:"forwarded_date,omitempty"`
+	EditDate             string          `json:"edit_date,omitempty"`
+	GroupedID            int64           `json:"grouped_id,omitempty"`
+	Entities             []MessageEntity `json:"entities,omitempty"`
+}
+
+type MessageEntity struct {
+	Type   string `json:"type"`
+	Offset int    `json:"offset"`
+	Length int    `json:"length"`
 }
 
 func (a App) History(ctx context.Context, peerToken string, limit int) (MessagePage, error) {
@@ -397,35 +422,80 @@ func (a App) Read(ctx context.Context, opts ReadOptions) (MessagePage, error) {
 		if err != nil {
 			return err
 		}
-		out, err = readPages(ctx, input, peerRef.Ref, opts, c.API().MessagesGetHistory)
+		store := peerstore.New(a.Paths.Data, a.Profile)
+		out, err = readPages(ctx, input, peerRef.Ref, opts, func(ctx context.Context, req *tg.MessagesGetHistoryRequest) (tg.MessagesMessagesClass, error) {
+			res, fetchErr := c.API().MessagesGetHistory(ctx, req)
+			if fetchErr != nil {
+				return nil, fetchErr
+			}
+			_, peers := messagePeerCatalog(res)
+			if len(peers) > 0 {
+				if saveErr := store.Upsert(peers); saveErr != nil {
+					return nil, saveErr
+				}
+			}
+			return res, nil
+		})
 		return err
 	})
 	return out, err
 }
 
-func (a App) Search(ctx context.Context, query, peerToken string, limit int) ([]Message, error) {
-	var out []Message
+func (a App) Search(ctx context.Context, opts SearchOptions) (MessagePage, error) {
+	var out MessagePage
 	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
-		input := tg.InputPeerClass(&tg.InputPeerEmpty{})
+		var input tg.InputPeerClass
 		peerRef := peerstore.Peer{}
-		if peerToken != "" {
+		if opts.Peer != "" {
 			var err error
-			input, peerRef, err = a.resolvePeer(ctx, c, peerToken)
+			input, peerRef, err = a.resolvePeer(ctx, c, opts.Peer)
 			if err != nil {
 				return err
 			}
 		}
-		res, err := c.API().MessagesSearch(ctx, &tg.MessagesSearchRequest{
-			Peer:   input,
-			Q:      query,
-			Filter: &tg.InputMessagesFilterEmpty{},
-			Limit:  limit,
+		store := peerstore.New(a.Paths.Data, a.Profile)
+		var searchErr error
+		out, searchErr = searchPages(ctx, peerRef.Ref, opts, func(ctx context.Context, cursor retrievalCursor, limit int) (tg.MessagesMessagesClass, error) {
+			var res tg.MessagesMessagesClass
+			var fetchErr error
+			if opts.Peer != "" {
+				res, fetchErr = c.API().MessagesSearch(ctx, &tg.MessagesSearchRequest{
+					Peer:     input,
+					Q:        opts.Query,
+					Filter:   &tg.InputMessagesFilterEmpty{},
+					OffsetID: cursor.OffsetID,
+					Limit:    limit,
+				})
+			} else {
+				offsetPeer := tg.InputPeerClass(&tg.InputPeerEmpty{})
+				if cursor.OffsetID > 0 {
+					var cursorErr error
+					offsetPeer, _, cursorErr = store.Resolve(cursor.OffsetPeerRef)
+					if cursorErr != nil {
+						return nil, fmt.Errorf("resolve global search cursor peer: %w", cursorErr)
+					}
+				}
+				res, fetchErr = c.API().MessagesSearchGlobal(ctx, &tg.MessagesSearchGlobalRequest{
+					Q:          opts.Query,
+					Filter:     &tg.InputMessagesFilterEmpty{},
+					OffsetRate: cursor.OffsetRate,
+					OffsetPeer: offsetPeer,
+					OffsetID:   cursor.OffsetID,
+					Limit:      limit,
+				})
+			}
+			if fetchErr != nil {
+				return nil, fetchErr
+			}
+			_, peers := messagePeerCatalog(res)
+			if len(peers) > 0 {
+				if saveErr := store.Upsert(peers); saveErr != nil {
+					return nil, saveErr
+				}
+			}
+			return res, nil
 		})
-		if err != nil {
-			return err
-		}
-		out = messagesFromResult(peerRef.Ref, res)
-		return nil
+		return searchErr
 	})
 	return out, err
 }
@@ -898,37 +968,8 @@ func messageClasses(res tg.MessagesMessagesClass) []tg.MessageClass {
 }
 
 func messagesFromResult(sourcePeer string, res tg.MessagesMessagesClass) []Message {
-	classes := messageClasses(res)
-	out := make([]Message, 0, len(classes))
-	for _, cls := range classes {
-		switch msg := cls.(type) {
-		case *tg.Message:
-			item := Message{
-				ID:            msg.ID,
-				Date:          unixDate(msg.Date),
-				Text:          redactSensitiveText(msg.Message),
-				Outgoing:      msg.Out,
-				Post:          msg.Post,
-				SideEffects:   []string{"may_mark_read"},
-				SourcePeerRef: sourcePeer,
-			}
-			if media, ok := msg.GetMedia(); ok {
-				item.Media = media.TypeName()
-			}
-			out = append(out, item)
-		case *tg.MessageService:
-			out = append(out, Message{
-				ID:            msg.ID,
-				Date:          unixDate(msg.Date),
-				Outgoing:      msg.Out,
-				Post:          msg.Post,
-				Service:       msg.Action.TypeName(),
-				SideEffects:   []string{"may_mark_read"},
-				SourcePeerRef: sourcePeer,
-			})
-		}
-	}
-	return out
+	messages, _ := convertMessages(sourcePeer, res)
+	return messages
 }
 
 func mediaTypeName(msg *tg.Message) string {

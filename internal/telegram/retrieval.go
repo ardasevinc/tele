@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/gotd/td/tg"
+
+	"github.com/ardasevinc/tele/internal/peerstore"
 )
 
 const (
@@ -53,6 +55,125 @@ type retrievalCursor struct {
 }
 
 type historyFetcher func(context.Context, *tg.MessagesGetHistoryRequest) (tg.MessagesMessagesClass, error)
+type searchFetcher func(context.Context, retrievalCursor, int) (tg.MessagesMessagesClass, error)
+
+func searchPages(ctx context.Context, scopePeer string, opts SearchOptions, fetch searchFetcher) (MessagePage, error) {
+	var page MessagePage
+	if err := validateRequestedLimit(opts.Limit, maxMessageResults); err != nil {
+		return page, err
+	}
+	kind := "search-global"
+	if scopePeer != "" {
+		kind = "search-peer"
+	}
+	scope := scopeFingerprint(kind, scopePeer, opts.Query)
+	cursor, err := decodeCursor(opts.Cursor, kind, scope)
+	if err != nil {
+		return page, err
+	}
+	page.Receipt.RequestedCount = opts.Limit
+	page.Receipt.InputCursor = opts.Cursor
+	seen := make(map[string]struct{}, opts.Limit)
+	completeKnown := false
+	complete := false
+	serverInexact := false
+	var lastMessage Message
+	var lastPeer peerstore.Peer
+	for page.Receipt.Pages < maxTelegramPages && len(page.Items) < opts.Limit {
+		requestLimit := telegramPageSize
+		if remaining := opts.Limit - len(page.Items); remaining < requestLimit {
+			requestLimit = remaining
+		}
+		res, fetchErr := fetch(ctx, cursor, requestLimit)
+		if fetchErr != nil {
+			return MessagePage{}, fetchErr
+		}
+		page.Receipt.Pages++
+		if total, inexact := messageResultTotal(res); total != nil {
+			page.Receipt.ServerTotal = total
+			serverInexact = serverInexact || inexact
+		}
+		classes := messageClasses(res)
+		if len(classes) == 0 {
+			completeKnown, complete = true, true
+			break
+		}
+		converted, peers := convertMessages(scopePeer, res)
+		peerByRef := make(map[string]peerstore.Peer, len(peers))
+		for _, peer := range peers {
+			peerByRef[peer.Ref] = peer
+		}
+		for _, message := range converted {
+			key := message.SourcePeerRef + ":" + fmt.Sprintf("%d", message.ID)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			page.Items = append(page.Items, message)
+			lastMessage = message
+			lastPeer = peerstore.Peer{}
+			if peer, ok := peerByRef[message.SourcePeerRef]; ok {
+				lastPeer = peer
+			}
+			if len(page.Items) == opts.Limit {
+				break
+			}
+		}
+		if len(classes) < requestLimit {
+			completeKnown, complete = true, true
+			break
+		}
+		if lastMessage.ID == 0 {
+			break
+		}
+		cursor.OffsetID = lastMessage.ID
+		if kind == "search-global" {
+			cursor.OffsetRate = messageResultNextRate(res, lastMessage.Date)
+			cursor.OffsetPeerRef = lastPeer.Ref
+		}
+	}
+	page.Receipt.ReturnedCount = len(page.Items)
+	if page.Receipt.ServerTotal != nil && opts.Cursor == "" && len(page.Items) >= *page.Receipt.ServerTotal {
+		completeKnown, complete = true, true
+	}
+	if serverInexact {
+		completeKnown = false
+	}
+	if completeKnown {
+		page.Receipt.Complete = &complete
+	}
+	if len(page.Items) >= opts.Limit && !complete {
+		incomplete := false
+		page.Receipt.Complete = &incomplete
+	}
+	page.Receipt.Truncated = page.Receipt.Complete == nil || !*page.Receipt.Complete
+	if page.Receipt.Truncated && lastMessage.ID > 0 {
+		if kind == "search-global" && lastPeer.Ref == "" {
+			return MessagePage{}, fmt.Errorf("cannot construct a stable cursor for global search result %d", lastMessage.ID)
+		}
+		cursor.Kind = kind
+		cursor.Scope = scope
+		cursor.OffsetID = lastMessage.ID
+		page.Receipt.NextCursor, err = encodeCursor(cursor)
+		if err != nil {
+			return MessagePage{}, err
+		}
+	}
+	return page, nil
+}
+
+func messageResultNextRate(res tg.MessagesMessagesClass, fallbackDate string) int {
+	if slice, ok := res.(*tg.MessagesMessagesSlice); ok {
+		if rate, exists := slice.GetNextRate(); exists {
+			return rate
+		}
+	}
+	date, err := time.Parse(time.RFC3339, fallbackDate)
+	if err != nil {
+		return 0
+	}
+	return int(date.Unix())
+}
 
 func readPages(ctx context.Context, input tg.InputPeerClass, peerRef string, opts ReadOptions, fetch historyFetcher) (MessagePage, error) {
 	var page MessagePage

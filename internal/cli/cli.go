@@ -373,6 +373,7 @@ func readCommand(s *appState) *cobra.Command {
 func searchCommand(s *appState) *cobra.Command {
 	var limit int
 	var chat string
+	var cursor string
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search Telegram messages conservatively",
@@ -385,15 +386,18 @@ func searchCommand(s *appState) *cobra.Command {
 			limit = s.defaultLimit(limit)
 			w := s.writer()
 			w.Warn("search reads may mark Telegram messages read")
-			messages, err := app.Search(cmd.Context(), args[0], chat, limit)
+			page, err := app.Search(cmd.Context(), tgapp.SearchOptions{Query: args[0], Peer: chat, Limit: limit, Cursor: cursor})
 			if err != nil {
 				return err
 			}
-			return writeMessages(s, messages, s.telegramMeta(cmd.Context(), app, limit, chat, []string{"may_mark_read"}))
+			meta := s.telegramMeta(cmd.Context(), app, limit, chat, []string{"may_mark_read"})
+			applyRetrievalReceipt(&meta, page.Receipt)
+			return writeMessages(s, page.Items, meta)
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum messages to return")
 	cmd.Flags().StringVar(&chat, "chat", "", "scope search to peer ref, username, or cached title")
+	cmd.Flags().StringVar(&cursor, "cursor", "", "opaque cursor returned by a previous search")
 	return cmd
 }
 
@@ -1098,7 +1102,11 @@ func writeMessages(s *appState, messages []tgapp.Message, meta output.Meta) erro
 		if text == "" {
 			text = "[" + firstNonEmpty(msg.Media, msg.Service, "empty") + "]"
 		}
-		if _, err := fmt.Fprintf(w.Out, "%s #%d %s\n", msg.Date, msg.ID, text); err != nil {
+		location := ""
+		if msg.SourcePeerRef != "" && (meta.PeerRef == "" || msg.SourcePeerRef != meta.PeerRef) {
+			location = firstNonEmpty(msg.SourcePeerLabel, msg.SourcePeerRef) + " "
+		}
+		if _, err := fmt.Fprintf(w.Out, "%s %s#%d %s: %s\n", msg.Date, location, msg.ID, messageSpeaker(msg), text); err != nil {
 			return err
 		}
 	}
@@ -1161,10 +1169,7 @@ func writeTranscript(s *appState, messages []tgapp.Message, meta output.Meta, pe
 		if clock == "" {
 			clock = "??:??"
 		}
-		speaker := "them"
-		if msg.Outgoing {
-			speaker = "me"
-		}
+		speaker := messageSpeaker(msg)
 		line := transcriptBody(msg)
 		if _, err := fmt.Fprintf(w.Out, "[%d] %s %s: %s\n", msg.ID, clock, speaker, firstTranscriptLine(line)); err != nil {
 			return err
@@ -1261,6 +1266,13 @@ func transcriptBody(msg tgapp.Message) string {
 		return "[service: " + msg.Service + "]"
 	}
 	return "[empty]"
+}
+
+func messageSpeaker(msg tgapp.Message) string {
+	if msg.Outgoing {
+		return "me"
+	}
+	return firstNonEmpty(msg.SenderLabel, msg.SenderPeerRef, "them")
 }
 
 func mediaLabel(media string) string {

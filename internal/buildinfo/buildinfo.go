@@ -1,6 +1,6 @@
 package buildinfo
 
 var (
-	Version = "0.1.0-alpha.6"
+	Version = "0.1.0-alpha.7"
 	Commit  = "dev"
 )

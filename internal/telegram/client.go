@@ -318,7 +318,7 @@ func (a App) resolvePeer(ctx context.Context, c *telegram.Client, token string) 
 	if input, p, err := peerstore.New(a.Paths.Data, a.Profile).Resolve(token); err == nil {
 		return input, p, nil
 	}
-	input, err := gotdpeer.Resolve(gotdpeer.DefaultResolver(c.API()), token)(ctx)
+	input, err := gotdpeer.Resolve(token).Bind(gotdpeer.DefaultResolver(c.API()))(ctx)
 	if err != nil {
 		return nil, peerstore.Peer{}, err
 	}

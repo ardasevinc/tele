@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -75,6 +76,65 @@ func TestWithLockHonorsCancellation(t *testing.T) {
 	}
 	close(release)
 	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWithLockCoordinatesSeparateProcesses(t *testing.T) {
+	if os.Getenv("TELE_LOCK_HELPER") == "1" {
+		lockPath := os.Getenv("TELE_LOCK_PATH")
+		readyPath := os.Getenv("TELE_LOCK_READY")
+		releasePath := os.Getenv("TELE_LOCK_RELEASE")
+		if err := WithLock(context.Background(), lockPath, func() error {
+			if err := os.WriteFile(readyPath, []byte("ready"), FileMode); err != nil {
+				return err
+			}
+			for {
+				if _, err := os.Stat(releasePath); err == nil {
+					return nil
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "state.lock")
+	readyPath := filepath.Join(dir, "ready")
+	releasePath := filepath.Join(dir, "release")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestWithLockCoordinatesSeparateProcesses$")
+	cmd.Env = append(os.Environ(),
+		"TELE_LOCK_HELPER=1",
+		"TELE_LOCK_PATH="+lockPath,
+		"TELE_LOCK_READY="+readyPath,
+		"TELE_LOCK_RELEASE="+releasePath,
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill() }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(readyPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("helper did not acquire lock")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := WithLock(ctx, lockPath, func() error { return errors.New("must not run") }); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cross-process lock error = %v", err)
+	}
+	if err := os.WriteFile(releasePath, []byte("release"), FileMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
 		t.Fatal(err)
 	}
 }

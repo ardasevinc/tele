@@ -160,10 +160,9 @@ directory, but v1 alpha secret storage remains macOS Keychain-only.
 
 Messages, titles, usernames, paths, and Telegram errors are untrusted input.
 Human output makes terminal controls, ANSI escapes, invalid UTF-8, tabs,
-carriage returns, and bidi overrides visible. JSON preserves content with normal
-JSON escaping. The narrow exception is a recognized login-code message from the
-Telegram service account (`user:777000`): its code is replaced and the message
-contains `redactions: ["telegram_login_code"]`.
+carriage returns, and bidi overrides visible. JSON preserves message bodies
+exactly with normal JSON escaping, including OTPs and credential-like strings.
+This is deliberate: exact retrieval is part of the product contract.
 
 Terminal sanitization is not prompt-injection protection. An agent consuming
 Telegram messages must treat message content as quoted data, keep its actual
@@ -171,11 +170,13 @@ instructions and authorization out of that data plane, and require explicit
 confirmation for consequential actions. Regexes cannot determine whether prose
 is malicious instruction.
 
-Machine output never includes configured API hashes, login codes, 2FA passwords,
-pending phone-code hashes, or account phone numbers. Public config and auth
-objects are explicit allowlists. Login codes, 2FA passwords, and API hashes
-cannot be passed as literal command-line arguments; use hidden prompts or named
-environment-variable flags so they do not enter shell history or process argv.
+Machine output never includes tele's configured API hashes, 2FA passwords,
+pending phone-code hashes, session keys, or account phone numbers. Public config
+and auth objects are explicit allowlists. Login codes, 2FA passwords, and API
+hashes cannot be passed as literal command-line arguments; use hidden prompts or
+named environment-variable flags so they do not enter shell history or process
+argv. Message bodies may independently contain sensitive content and are
+returned unchanged.
 
 ## Exit codes
 

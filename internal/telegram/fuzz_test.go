@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gotd/td/tg"
 )
 
 func FuzzSafeDownloadFileName(f *testing.F) {
@@ -21,21 +23,16 @@ func FuzzSafeDownloadFileName(f *testing.F) {
 	})
 }
 
-func FuzzLoginCodeRedaction(f *testing.F) {
+func FuzzMessageContentPreservation(f *testing.F) {
 	for _, seed := range []string{"Login code: 12345", "This is your login code:\nABCDE", "ordinary text", "\x1b[31m"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, text string) {
-		otherText, otherRedactions := redactMessageText("user:42", text)
-		if otherText != text || len(otherRedactions) != 0 {
-			t.Fatalf("non-service message changed: %q -> %q (%v)", text, otherText, otherRedactions)
-		}
-		redacted, labels := redactMessageText("user:777000", text)
-		if redacted == text && len(labels) != 0 {
-			t.Fatalf("unchanged text has redaction receipt: %v", labels)
-		}
-		if redacted != text && (len(labels) != 1 || labels[0] != "telegram_login_code") {
-			t.Fatalf("changed text lacks exact receipt: %v", labels)
+		message := &tg.Message{ID: 1, PeerID: &tg.PeerUser{UserID: 777000}, Message: text}
+		message.SetFlags()
+		messages, _ := convertMessages("", &tg.MessagesMessages{Messages: []tg.MessageClass{message}})
+		if len(messages) != 1 || messages[0].Text != text {
+			t.Fatalf("message content changed: %q -> %#v", text, messages)
 		}
 	})
 }

@@ -29,7 +29,6 @@ func convertMessages(sourceFallback string, res tg.MessagesMessagesClass) ([]Mes
 				Post:     msg.Post,
 			}
 			hydrateMessageIdentity(&item, msg.PeerID, msg.FromID, sourceFallback, identities)
-			item.Text, item.Redactions = redactMessageText(item.SourcePeerRef, item.Text)
 			if media, ok := msg.GetMedia(); ok {
 				item.Media = media.TypeName()
 			}

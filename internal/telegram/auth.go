@@ -293,7 +293,7 @@ func (a *interactiveAuth) Code(ctx context.Context, _ *tg.AuthSentCode) (string,
 	if a.code != "" {
 		return a.code, nil
 	}
-	return a.prompt(ctx, "login code: ", false)
+	return a.prompt(ctx, "login code: ", true)
 }
 
 func (a *interactiveAuth) AcceptTermsOfService(context.Context, tg.HelpTermsOfService) error {

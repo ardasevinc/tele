@@ -40,6 +40,11 @@ tele chats --limit 20
 
 For one-shot interactive login, `tele auth login` still works.
 
+`tele auth logout` revokes the Telegram authorization but deliberately retains
+local encrypted session material. Use `tele auth reset-local --yes` when you
+intend to delete the encrypted session, its Keychain key, and pending split-auth
+state. Pending split-auth attempts expire locally after 15 minutes.
+
 ## Agent surface
 
 ```sh
@@ -55,6 +60,9 @@ tele react <peer> 123 --emoji "👍" --json
 printf 'edited' | tele edit <peer> 123 --text-stdin --json
 tele delete <peer> 123 --for-me --yes --json
 ```
+
+`--text` and `--text-stdin` are mutually exclusive. tele rejects the ambiguous
+combination before reading stdin, loading configuration, or contacting Telegram.
 
 Use transcript output when giving messages directly to an agent. It preserves
 message IDs and retrieval metadata without the token cost of full JSON. Use
@@ -75,6 +83,55 @@ silently sleep for minutes.
 Use `--wait` to opt into a 30-second retry budget, or set an explicit total
 budget such as `--wait=2m`. The hard ceiling is five minutes. Repeated flood
 responses share that budget, so retries cannot wait forever.
+
+## Timeouts
+
+Every command has one total context deadline, including lock waits, prompts,
+flood-wait sleeps, and Telegram requests. `--timeout` overrides it, up to 30
+minutes. A zero value selects the command default:
+
+- 30 seconds for local config, profile, doctor, and local-auth reset commands
+- 2 minutes for ordinary Telegram reads and mutations
+- 5 minutes for interactive and split authentication
+- 10 minutes for explicit media downloads
+
+The timeout bounds an opted-in `--wait` budget too. Timeout and caller
+cancellation errors are structured as `timeout` and `canceled`.
+
+## Doctor
+
+`tele doctor` performs aggregated read-only local checks and returns `{ ok,
+checks }` instead of stopping at the first problem. It checks config parsing and
+permissions, profile/API-ID readiness, secret-store support, API-hash and session
+key availability, session decryption, peer-cache parsing and permissions, and
+running-vs-installed binary path drift. Each check is `pass`, `warning`,
+`failed`, or `skipped`.
+
+Live access is opt-in:
+
+```sh
+tele doctor --json
+tele doctor --connect --json
+```
+
+`--connect` performs bounded connectivity and authorization checks. Doctor never
+returns secret values, session bytes, message data, or raw remote errors. A
+report containing failed checks exits nonzero after writing exactly one complete
+human or machine report.
+
+## Local state
+
+Config, encrypted sessions, and peer caches are replaced atomically using
+same-directory private temporary files, file and directory syncs, and atomic
+rename. Existing modes are tightened to `0600` for files and `0700` for
+directories. Profile mutations are serialized within and across processes.
+Media downloads are promoted atomically only after completion, so interrupted
+downloads neither replace an existing destination nor leave partial files.
+
+On macOS the config follows `os.UserConfigDir`, normally
+`~/Library/Application Support/tele/config.toml`; profile data lives under
+`~/.local/share/tele/<profile>/`. Other platforms use their Go-native user config
+directory, but v1 alpha secret storage remains macOS Keychain-only.
 
 ## Untrusted content
 

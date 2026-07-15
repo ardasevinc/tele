@@ -61,14 +61,14 @@ func (w Writer) Info(format string, args ...any) {
 	if w.Quiet || w.Format != Human {
 		return
 	}
-	_, _ = fmt.Fprintf(w.Err, "info: "+format+"\n", args...)
+	_, _ = fmt.Fprintln(w.Err, "info: "+SanitizeTerminal(fmt.Sprintf(format, args...)))
 }
 
 func (w Writer) Warn(format string, args ...any) {
 	if w.Quiet || w.Format != Human {
 		return
 	}
-	_, _ = fmt.Fprintf(w.Err, "warn: "+format+"\n", args...)
+	_, _ = fmt.Fprintln(w.Err, "warn: "+SanitizeTerminal(fmt.Sprintf(format, args...)))
 }
 
 type ErrorResponse struct {

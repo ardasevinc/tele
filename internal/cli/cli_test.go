@@ -270,3 +270,44 @@ func TestWriteTranscriptRendersResolvedGroupSpeaker(t *testing.T) {
 		t.Fatalf("transcript did not render sender:\n%s", out.String())
 	}
 }
+
+func TestHumanMessageRenderingMakesTerminalControlsVisible(t *testing.T) {
+	var out bytes.Buffer
+	state := &appState{out: &out}
+	message := tgapp.Message{
+		ID:          10,
+		Date:        "2026-05-13T12:01:53Z",
+		Text:        "first\x1b[31m\nsecond\u202Eline",
+		SenderLabel: "Ali\tce",
+	}
+	if err := writeMessages(state, []tgapp.Message{message}, output.Meta{}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{"Ali<TAB>ce", "first<ESC>[31m", "\n    second<BIDI-U+202E>line"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("human output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\u202E') {
+		t.Fatalf("human output retained terminal controls: %q", got)
+	}
+}
+
+func TestJSONMessageRenderingPreservesExactContent(t *testing.T) {
+	var out bytes.Buffer
+	state := &appState{out: &out, json: true}
+	original := "first\x1b[31m\nsecond\u202Eline"
+	if err := writeMessages(state, []tgapp.Message{{ID: 10, Text: original}}, output.Meta{}); err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Data []tgapp.Message `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if len(envelope.Data) != 1 || envelope.Data[0].Text != original {
+		t.Fatalf("JSON message text = %q, want exact %q", envelope.Data[0].Text, original)
+	}
+}

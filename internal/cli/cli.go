@@ -73,7 +73,7 @@ func Execute(ctx context.Context, args []string) error {
 		} else if state.json {
 			_ = w.JSON(output.ErrorFrom(err))
 		} else {
-			_, _ = fmt.Fprintln(state.err, "error:", err)
+			_, _ = fmt.Fprintln(state.err, "error:", safeHuman(err.Error()))
 		}
 		return exitError{code: 1, err: err}
 	}
@@ -298,7 +298,7 @@ func chatsCommand(s *appState) *cobra.Command {
 					return err
 				}
 				for _, chat := range page.Items {
-					if _, err := fmt.Fprintf(w.Out, "%-22s %-10s %4d %s\n", chat.Ref, chat.Kind, chat.UnreadCount, displayChat(chat)); err != nil {
+					if _, err := fmt.Fprintf(w.Out, "%-22s %-10s %4d %s\n", safeHuman(chat.Ref), safeHuman(chat.Kind), chat.UnreadCount, displayChat(chat)); err != nil {
 						return err
 					}
 				}
@@ -463,7 +463,7 @@ func exportCommand(s *appState) *cobra.Command {
 				return err
 			}
 			for _, msg := range page.Items {
-				if _, err := fmt.Fprintf(s.out, "- %s #%d %s\n", msg.Date, msg.ID, strings.TrimSpace(msg.Text)); err != nil {
+				if _, err := fmt.Fprintf(s.out, "- %s #%d %s\n", safeHuman(msg.Date), msg.ID, indentHumanText(msg.Text)); err != nil {
 					return err
 				}
 			}
@@ -505,7 +505,7 @@ func inboxLikeCommand(s *appState, name, mode, short string) *cobra.Command {
 					return err
 				}
 				for _, chat := range page.Items {
-					if _, err := fmt.Fprintf(w.Out, "%-22s unread=%-3d mentions=%-3d #%d %s %s\n", chat.Ref, chat.UnreadCount, chat.UnreadMentionsCount, chat.TopMessageID, displayChat(chat), strings.TrimSpace(chat.LastMessagePreview)); err != nil {
+					if _, err := fmt.Fprintf(w.Out, "%-22s unread=%-3d mentions=%-3d #%d %s %s\n", safeHuman(chat.Ref), chat.UnreadCount, chat.UnreadMentionsCount, chat.TopMessageID, displayChat(chat), indentHumanText(chat.LastMessagePreview)); err != nil {
 						return err
 					}
 				}
@@ -555,7 +555,7 @@ func mediaDownloadCommand(s *appState) *cobra.Command {
 				return err
 			}
 			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, result.PeerRef, nil), func(w output.Writer) error {
-				return w.Print(fmt.Sprintf("downloaded %s", result.Path))
+				return w.Print(fmt.Sprintf("downloaded %s", safeHuman(result.Path)))
 			})
 		},
 	}
@@ -782,7 +782,7 @@ func configCommand(s *appState) *cobra.Command {
 				path = paths.Config
 			}
 			return writeValue(s, map[string]string{"config": path}, func(w output.Writer) error {
-				return w.Print(path)
+				return w.Print(safeHuman(path))
 			})
 		},
 	})
@@ -812,7 +812,7 @@ func configCommand(s *appState) *cobra.Command {
 				})
 			case "default-profile":
 				return writeValue(s, map[string]string{"default_profile": cfg.DefaultProfile}, func(w output.Writer) error {
-					return w.Print(cfg.DefaultProfile)
+					return w.Print(safeHuman(cfg.DefaultProfile))
 				})
 			default:
 				return fmt.Errorf("unknown config key %q", args[0])
@@ -905,7 +905,7 @@ func profilesCommand(s *appState) *cobra.Command {
 					if name == cfg.DefaultProfile {
 						marker = "*"
 					}
-					if _, err := fmt.Fprintf(w.Out, "%s %s\n", marker, name); err != nil {
+					if _, err := fmt.Fprintf(w.Out, "%s %s\n", marker, safeHuman(name)); err != nil {
 						return err
 					}
 				}
@@ -930,7 +930,7 @@ func profilesCommand(s *appState) *cobra.Command {
 				return err
 			}
 			return writeValue(s, map[string]string{"default_profile": args[0]}, func(w output.Writer) error {
-				return w.Print(args[0])
+				return w.Print(safeHuman(args[0]))
 			})
 		},
 	})
@@ -947,7 +947,7 @@ func profilesCommand(s *appState) *cobra.Command {
 				return err
 			}
 			return writeValue(s, map[string]string{"profile": name}, func(w output.Writer) error {
-				return w.Print(name)
+				return w.Print(safeHuman(name))
 			})
 		},
 	})
@@ -987,11 +987,11 @@ func doctorCommand(s *appState) *cobra.Command {
 				body["config_mode_error"] = modeErr.Error()
 			}
 			return writeValue(s, body, func(w output.Writer) error {
-				if _, err := fmt.Fprintf(w.Out, "version: %s\nprofile: %s\nconfig: %s\ndata: %s\n", buildinfo.Version, profile, paths.Config, paths.Data); err != nil {
+				if _, err := fmt.Fprintf(w.Out, "version: %s\nprofile: %s\nconfig: %s\ndata: %s\n", safeHuman(buildinfo.Version), safeHuman(profile), safeHuman(paths.Config), safeHuman(paths.Data)); err != nil {
 					return err
 				}
 				if modeErr != nil {
-					w.Warn(modeErr.Error())
+					w.Warn("%s", modeErr.Error())
 				}
 				return nil
 			})
@@ -1100,7 +1100,7 @@ func previewMutation(s *appState, ctx context.Context, action, peerRef string, m
 	}
 	meta := s.meta(0, preview.PeerRef, nil)
 	return writeValueWithMeta(s, preview, meta, func(w output.Writer) error {
-		return w.Print(fmt.Sprintf("[profile %s] dry-run: %s %s", meta.Profile, action, preview.PeerRef))
+		return w.Print(fmt.Sprintf("[profile %s] dry-run: %s %s", safeHuman(meta.Profile), safeHuman(action), safeHuman(preview.PeerRef)))
 	})
 }
 
@@ -1127,15 +1127,15 @@ func writeMessagesWithFormat(s *appState, messages []tgapp.Message, meta output.
 		}
 	}
 	for _, msg := range messages {
-		text := strings.TrimSpace(msg.Text)
+		text := indentHumanText(msg.Text)
 		if text == "" {
-			text = "[" + firstNonEmpty(msg.Media, msg.Service, "empty") + "]"
+			text = "[" + safeHuman(firstNonEmpty(msg.Media, msg.Service, "empty")) + "]"
 		}
 		location := ""
 		if msg.SourcePeerRef != "" && (meta.PeerRef == "" || msg.SourcePeerRef != meta.PeerRef) {
-			location = firstNonEmpty(msg.SourcePeerLabel, msg.SourcePeerRef) + " "
+			location = safeHuman(firstNonEmpty(msg.SourcePeerLabel, msg.SourcePeerRef)) + " "
 		}
-		if _, err := fmt.Fprintf(w.Out, "%s %s#%d %s: %s\n", msg.Date, location, msg.ID, messageSpeaker(msg), text); err != nil {
+		if _, err := fmt.Fprintf(w.Out, "%s %s#%d %s: %s\n", safeHuman(msg.Date), location, msg.ID, messageSpeaker(msg), text); err != nil {
 			return err
 		}
 	}
@@ -1155,11 +1155,11 @@ func writeTranscript(s *appState, messages []tgapp.Message, meta output.Meta, pe
 	if label != "" {
 		headerPeer += " (" + label + ")"
 	}
-	if _, err := fmt.Fprintf(w.Out, "peer: %s\n", headerPeer); err != nil {
+	if _, err := fmt.Fprintf(w.Out, "peer: %s\n", safeHuman(headerPeer)); err != nil {
 		return err
 	}
 	if meta.FetchedAt != "" {
-		if _, err := fmt.Fprintf(w.Out, "fetched_at: %s\n", meta.FetchedAt); err != nil {
+		if _, err := fmt.Fprintf(w.Out, "fetched_at: %s\n", safeHuman(meta.FetchedAt)); err != nil {
 			return err
 		}
 	}
@@ -1174,7 +1174,7 @@ func writeTranscript(s *appState, messages []tgapp.Message, meta output.Meta, pe
 		}
 	}
 	if len(meta.SideEffects) > 0 {
-		if _, err := fmt.Fprintf(w.Out, "side_effects: %s\n", strings.Join(meta.SideEffects, ", ")); err != nil {
+		if _, err := fmt.Fprintf(w.Out, "side_effects: %s\n", safeHuman(strings.Join(meta.SideEffects, ", "))); err != nil {
 			return err
 		}
 	}
@@ -1253,14 +1253,14 @@ func retrievalSummary(meta output.Meta) string {
 		parts = append(parts, fmt.Sprintf("server_total=%d", *retrieval.ServerTotal))
 	}
 	if retrieval.NextCursor != "" {
-		parts = append(parts, "next_cursor="+retrieval.NextCursor)
+		parts = append(parts, "next_cursor="+safeHuman(retrieval.NextCursor))
 	}
 	return "retrieval: " + strings.Join(parts, " ")
 }
 
 func peerLabel(peer tgapp.PeerInfo) string {
-	title := strings.TrimSpace(peer.Title)
-	username := strings.TrimSpace(peer.Username)
+	title := strings.TrimSpace(safeHuman(peer.Title))
+	username := strings.TrimSpace(safeHuman(peer.Username))
 	if username != "" {
 		username = "@" + strings.TrimPrefix(username, "@")
 	}
@@ -1284,15 +1284,15 @@ func transcriptDateParts(value string) (string, string) {
 }
 
 func transcriptBody(msg tgapp.Message) string {
-	text := strings.TrimSpace(msg.Text)
+	text := strings.TrimSpace(safeHuman(msg.Text))
 	if text != "" {
 		return text
 	}
 	if msg.Media != "" {
-		return "[" + mediaLabel(msg.Media) + "]"
+		return "[" + mediaLabel(safeHuman(msg.Media)) + "]"
 	}
 	if msg.Service != "" {
-		return "[service: " + msg.Service + "]"
+		return "[service: " + safeHuman(msg.Service) + "]"
 	}
 	return "[empty]"
 }
@@ -1301,7 +1301,7 @@ func messageSpeaker(msg tgapp.Message) string {
 	if msg.Outgoing {
 		return "me"
 	}
-	return firstNonEmpty(msg.SenderLabel, msg.SenderPeerRef, "them")
+	return safeHuman(firstNonEmpty(msg.SenderLabel, msg.SenderPeerRef, "them"))
 }
 
 func mediaLabel(media string) string {
@@ -1380,7 +1380,7 @@ func (s *appState) requireWritable(action string) error {
 }
 
 func (s *appState) mutationReceipt(receipt string) string {
-	return fmt.Sprintf("[profile %s] confirmed: %s", s.profileName(), receipt)
+	return fmt.Sprintf("[profile %s] confirmed: %s", safeHuman(s.profileName()), safeHuman(receipt))
 }
 
 func parseTimeFilter(value string, now time.Time) (time.Time, error) {
@@ -1434,12 +1434,13 @@ func accountLabel(a *tgapp.Account) string {
 	if a == nil {
 		return "unknown"
 	}
-	name := strings.TrimSpace(a.FirstName + " " + a.LastName)
+	name := strings.TrimSpace(safeHuman(a.FirstName + " " + a.LastName))
 	if a.Username != "" {
+		username := safeHuman(a.Username)
 		if name != "" {
-			return name + " @" + a.Username
+			return name + " @" + username
 		}
-		return "@" + a.Username
+		return "@" + username
 	}
 	if name != "" {
 		return name
@@ -1448,10 +1449,19 @@ func accountLabel(a *tgapp.Account) string {
 }
 
 func displayChat(chat tgapp.Chat) string {
+	title := safeHuman(chat.Title)
 	if chat.Username != "" {
-		return chat.Title + " @" + chat.Username
+		return title + " @" + safeHuman(chat.Username)
 	}
-	return chat.Title
+	return title
+}
+
+func safeHuman(value string) string {
+	return output.SanitizeTerminal(value)
+}
+
+func indentHumanText(value string) string {
+	return strings.ReplaceAll(strings.TrimSpace(safeHuman(value)), "\n", "\n    ")
 }
 
 type publicConfigView struct {

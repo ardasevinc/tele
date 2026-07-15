@@ -118,6 +118,30 @@ func TestPublicConfigOmitsPhone(t *testing.T) {
 	}
 }
 
+func TestPublicAuthViewsOmitPhoneAndPendingCodeHash(t *testing.T) {
+	status := publicAuthStatus(tgapp.AuthStatus{
+		Profile:    "main",
+		Authorized: true,
+		Account:    &tgapp.Account{ID: 42, Username: "arda", Phone: "+905555555555"},
+	})
+	start := publicAuthStart(tgapp.AuthStartStatus{
+		Profile:        "main",
+		Phone:          "+905555555555",
+		CodeSent:       true,
+		CodeType:       "app",
+		TimeoutSeconds: 60,
+	})
+	for name, value := range map[string]any{"status": status, "start": start} {
+		b, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(b, []byte("905555555555")) || bytes.Contains(b, []byte("phone")) || bytes.Contains(b, []byte("code_hash")) {
+			t.Fatalf("public auth %s leaked private auth material: %s", name, b)
+		}
+	}
+}
+
 func TestConfigGetUsesMachineEnvelopeAndTypedJSONL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := config.Save(path, config.Config{

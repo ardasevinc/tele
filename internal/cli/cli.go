@@ -144,7 +144,7 @@ func authCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeValueWithMeta(s, status, metaFromStatus(s, status), func(w output.Writer) error {
+			return writeValueWithMeta(s, publicAuthStatus(status), metaFromStatus(s, status), func(w output.Writer) error {
 				if status.Authorized {
 					return w.Print("authorized as " + accountLabel(status.Account))
 				}
@@ -176,7 +176,7 @@ func authCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeValueWithMeta(s, status, metaFromStatus(s, tgapp.AuthStatus{Profile: s.profileName()}), func(w output.Writer) error {
+			return writeValueWithMeta(s, publicAuthStart(status), metaFromStatus(s, tgapp.AuthStatus{Profile: s.profileName()}), func(w output.Writer) error {
 				if status.AlreadyAuthorized {
 					return w.Print("already authorized")
 				}
@@ -199,7 +199,7 @@ func authCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeValueWithMeta(s, status, metaFromStatus(s, status), func(w output.Writer) error {
+			return writeValueWithMeta(s, publicAuthStatus(status), metaFromStatus(s, status), func(w output.Writer) error {
 				if status.Authorized {
 					return w.Print("authorized as " + accountLabel(status.Account))
 				}
@@ -224,7 +224,7 @@ func authCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeValueWithMeta(s, status, metaFromStatus(s, status), func(w output.Writer) error {
+			return writeValueWithMeta(s, publicAuthStatus(status), metaFromStatus(s, status), func(w output.Writer) error {
 				if status.Authorized {
 					return w.Print("authorized as " + accountLabel(status.Account))
 				}
@@ -267,7 +267,7 @@ func meCommand(s *appState) *cobra.Command {
 			if !status.Authorized {
 				return fmt.Errorf("not authorized; run tele auth login")
 			}
-			return writeValueWithMeta(s, status.Account, metaFromStatus(s, status), func(w output.Writer) error {
+			return writeValueWithMeta(s, publicAccount(status.Account), metaFromStatus(s, status), func(w output.Writer) error {
 				return w.Print(accountLabel(status.Account))
 			})
 		},

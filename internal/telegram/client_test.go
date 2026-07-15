@@ -132,3 +132,25 @@ func TestConfirmedMutationOutputError(t *testing.T) {
 		t.Fatalf("ConfirmedMutationOutputError = %+v", mutationErr)
 	}
 }
+
+func TestChatsFromDialogsKeepsSameIDPreviewsScopedToPeer(t *testing.T) {
+	user1 := &tg.User{ID: 1, AccessHash: 10, FirstName: "One"}
+	user1.SetFlags()
+	user2 := &tg.User{ID: 2, AccessHash: 20, FirstName: "Two"}
+	user2.SetFlags()
+	res := &tg.MessagesDialogsSlice{
+		Dialogs: []tg.DialogClass{
+			&tg.Dialog{Peer: &tg.PeerUser{UserID: 1}, TopMessage: 5},
+			&tg.Dialog{Peer: &tg.PeerUser{UserID: 2}, TopMessage: 5},
+		},
+		Messages: []tg.MessageClass{
+			&tg.Message{ID: 5, PeerID: &tg.PeerUser{UserID: 1}, Message: "one"},
+			&tg.Message{ID: 5, PeerID: &tg.PeerUser{UserID: 2}, Message: "two"},
+		},
+		Users: []tg.UserClass{user1, user2},
+	}
+	chats, _ := chatsFromDialogs(res)
+	if len(chats) != 2 || chats[0].LastMessagePreview != "one" || chats[1].LastMessagePreview != "two" {
+		t.Fatalf("chatsFromDialogs previews = %+v", chats)
+	}
+}

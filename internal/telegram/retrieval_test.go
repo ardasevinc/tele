@@ -192,6 +192,43 @@ func TestSearchCursorIsQueryAndScopeBound(t *testing.T) {
 	}
 }
 
+func TestDialogPagesHonorsLimitAndCursor(t *testing.T) {
+	first, err := dialogPages(context.Background(), ChatOptions{Limit: 100}, "", fakeDialogs(120))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 100 || first.Items[0].Ref != "user:120" || first.Items[99].Ref != "user:21" || first.Receipt.NextCursor == "" {
+		t.Fatalf("first dialog page = %d items, receipt %+v", len(first.Items), first.Receipt)
+	}
+	second, err := dialogPages(context.Background(), ChatOptions{Limit: 20, Cursor: first.Receipt.NextCursor}, "", fakeDialogs(120))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 20 || second.Items[0].Ref != "user:20" || second.Items[19].Ref != "user:1" {
+		t.Fatalf("second dialog page = %+v", second.Items)
+	}
+}
+
+func TestDialogPagesFiltersAcrossRawDialogs(t *testing.T) {
+	page, err := dialogPages(context.Background(), ChatOptions{Limit: 5}, "unread", fakeDialogs(120))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 5 || page.Items[0].Ref != "user:120" || page.Items[4].Ref != "user:80" || page.Receipt.Pages != 1 || page.Receipt.NextCursor == "" {
+		t.Fatalf("unread dialog page = %+v, receipt %+v", page.Items, page.Receipt)
+	}
+}
+
+func TestDialogCursorIsModeBound(t *testing.T) {
+	page, err := dialogPages(context.Background(), ChatOptions{Limit: 5}, "unread", fakeDialogs(120))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dialogPages(context.Background(), ChatOptions{Limit: 5, Cursor: page.Receipt.NextCursor}, "mentions", fakeDialogs(120)); err == nil {
+		t.Fatal("dialogPages accepted unread cursor for mentions")
+	}
+}
+
 func fakeHistory(total int, observe func(*tg.MessagesGetHistoryRequest)) historyFetcher {
 	return fakeHistoryWithDate(total, 0, observe)
 }
@@ -232,5 +269,29 @@ func fakeSearch(total int) searchFetcher {
 		res := &tg.MessagesMessagesSlice{Count: total, Messages: messages, Users: []tg.UserClass{user}}
 		res.SetNextRate(77)
 		return res, nil
+	}
+}
+
+func fakeDialogs(total int) dialogFetcher {
+	return func(_ context.Context, cursor retrievalCursor, limit int) (tg.MessagesDialogsClass, error) {
+		start := total
+		if cursor.OffsetID > 0 {
+			start = cursor.OffsetID - 1
+		}
+		dialogs := make([]tg.DialogClass, 0, limit)
+		messages := make([]tg.MessageClass, 0, limit)
+		users := make([]tg.UserClass, 0, limit)
+		for id := start; id > 0 && len(dialogs) < limit; id-- {
+			unread := 0
+			if id%10 == 0 {
+				unread = 1
+			}
+			dialogs = append(dialogs, &tg.Dialog{Peer: &tg.PeerUser{UserID: int64(id)}, TopMessage: id, UnreadCount: unread})
+			messages = append(messages, &tg.Message{ID: id, Date: id, PeerID: &tg.PeerUser{UserID: int64(id)}, Message: "preview"})
+			user := &tg.User{ID: int64(id), AccessHash: int64(id * 10), FirstName: "User"}
+			user.SetFlags()
+			users = append(users, user)
+		}
+		return &tg.MessagesDialogsSlice{Count: total, Dialogs: dialogs, Messages: messages, Users: users}, nil
 	}
 }

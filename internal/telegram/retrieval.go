@@ -56,6 +56,143 @@ type retrievalCursor struct {
 
 type historyFetcher func(context.Context, *tg.MessagesGetHistoryRequest) (tg.MessagesMessagesClass, error)
 type searchFetcher func(context.Context, retrievalCursor, int) (tg.MessagesMessagesClass, error)
+type dialogFetcher func(context.Context, retrievalCursor, int) (tg.MessagesDialogsClass, error)
+
+func dialogPages(ctx context.Context, opts ChatOptions, mode string, fetch dialogFetcher) (ChatPage, error) {
+	var page ChatPage
+	if err := validateRequestedLimit(opts.Limit, maxDialogResults); err != nil {
+		return page, err
+	}
+	kind := "dialogs"
+	scope := scopeFingerprint(kind, mode)
+	cursor, err := decodeCursor(opts.Cursor, kind, scope)
+	if err != nil {
+		return page, err
+	}
+	page.Receipt.RequestedCount = opts.Limit
+	page.Receipt.InputCursor = opts.Cursor
+	seen := make(map[string]struct{}, opts.Limit)
+	completeKnown := false
+	complete := false
+	var lastChat Chat
+	for page.Receipt.Pages < maxTelegramPages && len(page.Items) < opts.Limit {
+		requestLimit := telegramPageSize
+		if mode == "" {
+			if remaining := opts.Limit - len(page.Items); remaining < requestLimit {
+				requestLimit = remaining
+			}
+		}
+		res, fetchErr := fetch(ctx, cursor, requestLimit)
+		if fetchErr != nil {
+			return ChatPage{}, fetchErr
+		}
+		page.Receipt.Pages++
+		if total := dialogResultTotal(res); total != nil {
+			page.Receipt.ServerTotal = total
+		}
+		chats, peers := chatsFromDialogs(res)
+		rawCount := dialogResultLength(res)
+		if len(chats) != rawCount {
+			return ChatPage{}, fmt.Errorf("could not hydrate all %d Telegram dialogs; hydrated %d", rawCount, len(chats))
+		}
+		peerByRef := make(map[string]peerstore.Peer, len(peers))
+		for _, peer := range peers {
+			peerByRef[peer.Ref] = peer
+		}
+		if len(chats) == 0 {
+			completeKnown, complete = true, true
+			break
+		}
+		for _, chat := range chats {
+			lastChat = chat
+			if _, exists := seen[chat.Ref]; exists {
+				continue
+			}
+			seen[chat.Ref] = struct{}{}
+			if mode == "unread" && chat.UnreadCount == 0 {
+				continue
+			}
+			if mode == "mentions" && chat.UnreadMentionsCount == 0 {
+				continue
+			}
+			page.Items = append(page.Items, chat)
+			if len(page.Items) == opts.Limit {
+				break
+			}
+		}
+		if rawCount < requestLimit {
+			completeKnown, complete = true, true
+			break
+		}
+		peer, ok := peerByRef[lastChat.Ref]
+		if !ok || lastChat.TopMessageID == 0 {
+			break
+		}
+		cursor.OffsetID = lastChat.TopMessageID
+		cursor.OffsetDate = unixTimestamp(lastChat.LastMessageDate)
+		cursor.OffsetPeerRef = peer.Ref
+	}
+	page.Receipt.ReturnedCount = len(page.Items)
+	if mode == "" && page.Receipt.ServerTotal != nil && opts.Cursor == "" && len(page.Items) >= *page.Receipt.ServerTotal {
+		completeKnown, complete = true, true
+	}
+	if completeKnown {
+		page.Receipt.Complete = &complete
+	}
+	if len(page.Items) >= opts.Limit && !complete {
+		incomplete := false
+		page.Receipt.Complete = &incomplete
+	}
+	page.Receipt.Truncated = page.Receipt.Complete == nil || !*page.Receipt.Complete
+	if page.Receipt.Truncated && lastChat.TopMessageID > 0 {
+		cursor.Kind = kind
+		cursor.Scope = scope
+		cursor.OffsetID = lastChat.TopMessageID
+		cursor.OffsetDate = unixTimestamp(lastChat.LastMessageDate)
+		cursor.OffsetPeerRef = lastChat.Ref
+		page.Receipt.NextCursor, err = encodeCursor(cursor)
+		if err != nil {
+			return ChatPage{}, err
+		}
+	}
+	return page, nil
+}
+
+func dialogResultTotal(res tg.MessagesDialogsClass) *int {
+	if slice, ok := res.(*tg.MessagesDialogsSlice); ok {
+		total := slice.Count
+		return &total
+	}
+	return nil
+}
+
+func dialogResultLength(res tg.MessagesDialogsClass) int {
+	countDialogs := func(dialogs []tg.DialogClass) int {
+		count := 0
+		for _, dialog := range dialogs {
+			if _, ok := dialog.(*tg.Dialog); ok {
+				count++
+			}
+		}
+		return count
+	}
+	switch value := res.(type) {
+	case *tg.MessagesDialogs:
+		return countDialogs(value.Dialogs)
+	case *tg.MessagesDialogsSlice:
+		return countDialogs(value.Dialogs)
+	default:
+		return 0
+	}
+}
+
+func unixTimestamp(value string) int {
+	date, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return 0
+	}
+	return int(date.Unix())
+}
 
 func searchPages(ctx context.Context, scopePeer string, opts SearchOptions, fetch searchFetcher) (MessagePage, error) {
 	var page MessagePage

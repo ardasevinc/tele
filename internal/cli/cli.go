@@ -268,6 +268,7 @@ func meCommand(s *appState) *cobra.Command {
 
 func chatsCommand(s *appState) *cobra.Command {
 	var limit int
+	var cursor string
 	cmd := &cobra.Command{
 		Use:     "chats",
 		Aliases: []string{"dialogs"},
@@ -278,12 +279,17 @@ func chatsCommand(s *appState) *cobra.Command {
 				return err
 			}
 			limit = s.defaultLimit(limit)
-			chats, err := app.Chats(cmd.Context(), limit)
+			page, err := app.Chats(cmd.Context(), tgapp.ChatOptions{Limit: limit, Cursor: cursor})
 			if err != nil {
 				return err
 			}
-			return writeValueWithMeta(s, chats, s.telegramMeta(cmd.Context(), app, limit, "", nil), func(w output.Writer) error {
-				for _, chat := range chats {
+			meta := s.telegramMeta(cmd.Context(), app, limit, "", nil)
+			applyRetrievalReceipt(&meta, page.Receipt)
+			return writeValueWithMeta(s, page.Items, meta, func(w output.Writer) error {
+				if _, err := fmt.Fprintln(w.Out, retrievalSummary(meta)); err != nil {
+					return err
+				}
+				for _, chat := range page.Items {
 					if _, err := fmt.Fprintf(w.Out, "%-22s %-10s %4d %s\n", chat.Ref, chat.Kind, chat.UnreadCount, displayChat(chat)); err != nil {
 						return err
 					}
@@ -293,6 +299,7 @@ func chatsCommand(s *appState) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum chats to return")
+	cmd.Flags().StringVar(&cursor, "cursor", "", "opaque cursor returned by a previous chats call")
 	return cmd
 }
 
@@ -474,6 +481,7 @@ func inboxCommand(s *appState) *cobra.Command {
 
 func inboxLikeCommand(s *appState, name, mode, short string) *cobra.Command {
 	var limit int
+	var cursor string
 	cmd := &cobra.Command{
 		Use:   name,
 		Short: short,
@@ -483,12 +491,17 @@ func inboxLikeCommand(s *appState, name, mode, short string) *cobra.Command {
 				return err
 			}
 			limit = s.defaultLimit(limit)
-			chats, err := app.Inbox(cmd.Context(), limit, mode)
+			page, err := app.Inbox(cmd.Context(), tgapp.ChatOptions{Limit: limit, Cursor: cursor}, mode)
 			if err != nil {
 				return err
 			}
-			return writeValueWithMeta(s, chats, s.telegramMeta(cmd.Context(), app, limit, "", nil), func(w output.Writer) error {
-				for _, chat := range chats {
+			meta := s.telegramMeta(cmd.Context(), app, limit, "", nil)
+			applyRetrievalReceipt(&meta, page.Receipt)
+			return writeValueWithMeta(s, page.Items, meta, func(w output.Writer) error {
+				if _, err := fmt.Fprintln(w.Out, retrievalSummary(meta)); err != nil {
+					return err
+				}
+				for _, chat := range page.Items {
 					if _, err := fmt.Fprintf(w.Out, "%-22s unread=%-3d mentions=%-3d #%d %s %s\n", chat.Ref, chat.UnreadCount, chat.UnreadMentionsCount, chat.TopMessageID, displayChat(chat), strings.TrimSpace(chat.LastMessagePreview)); err != nil {
 						return err
 					}
@@ -498,6 +511,7 @@ func inboxLikeCommand(s *appState, name, mode, short string) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum dialogs to return")
+	cmd.Flags().StringVar(&cursor, "cursor", "", "opaque cursor returned by a previous dialog listing")
 	if name == "inbox" {
 		cmd.AddCommand(inboxLikeCommand(s, "unread", "unread", "List dialogs with unread messages"))
 		cmd.AddCommand(inboxLikeCommand(s, "mentions", "mentions", "List dialogs with unread mentions"))

@@ -98,6 +98,11 @@ type SearchOptions struct {
 	Cursor string
 }
 
+type ChatOptions struct {
+	Limit  int
+	Cursor string
+}
+
 type MediaDownloadOptions struct {
 	Peer      string
 	MessageID int
@@ -329,43 +334,49 @@ type PeerInfo struct {
 	Username string `json:"username,omitempty"`
 }
 
-func (a App) Chats(ctx context.Context, limit int) ([]Chat, error) {
-	var out []Chat
-	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
-		dialogs, err := c.API().MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
-			Limit:      limit,
-			OffsetPeer: &tg.InputPeerEmpty{},
-		})
-		if err != nil {
-			return err
-		}
-		items, peers := chatsFromDialogs(dialogs)
-		out = items
-		return peerstore.New(a.Paths.Data, a.Profile).Upsert(peers)
-	})
-	return out, err
+func (a App) Chats(ctx context.Context, opts ChatOptions) (ChatPage, error) {
+	return a.dialogs(ctx, opts, "")
 }
 
-func (a App) Inbox(ctx context.Context, limit int, mode string) ([]Chat, error) {
-	chats, err := a.Chats(ctx, limit)
-	if err != nil {
-		return nil, err
-	}
-	out := chats[:0]
-	for _, chat := range chats {
-		switch mode {
-		case "unread":
-			if chat.UnreadCount == 0 {
-				continue
+func (a App) Inbox(ctx context.Context, opts ChatOptions, mode string) (ChatPage, error) {
+	return a.dialogs(ctx, opts, mode)
+}
+
+func (a App) dialogs(ctx context.Context, opts ChatOptions, mode string) (ChatPage, error) {
+	var out ChatPage
+	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
+		store := peerstore.New(a.Paths.Data, a.Profile)
+		var pageErr error
+		out, pageErr = dialogPages(ctx, opts, mode, func(ctx context.Context, cursor retrievalCursor, limit int) (tg.MessagesDialogsClass, error) {
+			offsetPeer := tg.InputPeerClass(&tg.InputPeerEmpty{})
+			if cursor.OffsetID > 0 {
+				var resolveErr error
+				offsetPeer, _, resolveErr = store.Resolve(cursor.OffsetPeerRef)
+				if resolveErr != nil {
+					return nil, fmt.Errorf("resolve dialog cursor peer: %w", resolveErr)
+				}
 			}
-		case "mentions":
-			if chat.UnreadMentionsCount == 0 {
-				continue
+			res, fetchErr := c.API().MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+				ExcludePinned: cursor.OffsetID > 0,
+				OffsetDate:    cursor.OffsetDate,
+				OffsetID:      cursor.OffsetID,
+				OffsetPeer:    offsetPeer,
+				Limit:         limit,
+			})
+			if fetchErr != nil {
+				return nil, fetchErr
 			}
-		}
-		out = append(out, chat)
-	}
-	return out, nil
+			_, peers := chatsFromDialogs(res)
+			if len(peers) > 0 {
+				if saveErr := store.Upsert(peers); saveErr != nil {
+					return nil, saveErr
+				}
+			}
+			return res, nil
+		})
+		return pageErr
+	})
+	return out, err
 }
 
 func (a App) PeerInfo(token string) PeerInfo {
@@ -868,7 +879,8 @@ func chatsFromDialogs(dialogs tg.MessagesDialogsClass) ([]Chat, []peerstore.Peer
 			}
 			key := peerKey(dialog.Peer)
 			if p, ok := peerByID[key]; ok {
-				addPeer(p, dialog.UnreadCount, dialog.UnreadMentionsCount, dialog.TopMessage, previewByID[dialog.TopMessage])
+				previewKey := fmt.Sprintf("%s:%d", key, dialog.TopMessage)
+				addPeer(p, dialog.UnreadCount, dialog.UnreadMentionsCount, dialog.TopMessage, previewByID[previewKey])
 			}
 		}
 	}
@@ -886,8 +898,8 @@ type messagePreview struct {
 	Text string
 }
 
-func messagePreviews(messages []tg.MessageClass) map[int]messagePreview {
-	out := map[int]messagePreview{}
+func messagePreviews(messages []tg.MessageClass) map[string]messagePreview {
+	out := map[string]messagePreview{}
 	for _, cls := range messages {
 		switch msg := cls.(type) {
 		case *tg.Message:
@@ -897,9 +909,9 @@ func messagePreviews(messages []tg.MessageClass) map[int]messagePreview {
 					text = "[" + media.TypeName() + "]"
 				}
 			}
-			out[msg.ID] = messagePreview{Date: unixDate(msg.Date), Text: text}
+			out[fmt.Sprintf("%s:%d", peerKey(msg.PeerID), msg.ID)] = messagePreview{Date: unixDate(msg.Date), Text: text}
 		case *tg.MessageService:
-			out[msg.ID] = messagePreview{Date: unixDate(msg.Date), Text: "[" + msg.Action.TypeName() + "]"}
+			out[fmt.Sprintf("%s:%d", peerKey(msg.PeerID), msg.ID)] = messagePreview{Date: unixDate(msg.Date), Text: "[" + msg.Action.TypeName() + "]"}
 		}
 	}
 	return out

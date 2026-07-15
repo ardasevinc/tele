@@ -45,6 +45,7 @@ assets.
 
 ## Rollback
 
-Published release assets are immutable evidence. If a release is bad, document
-the defect, mark it clearly in GitHub, fix forward with a new version, and update
-the tap. Do not retag or silently replace assets.
+GitHub-enforced release immutability applies to releases published after it was
+enabled on 2026-07-15. Treat every published release as append-only evidence. If
+a release is bad, document the defect, mark it clearly in GitHub, fix forward
+with a new version, and update the tap. Do not retag or silently replace assets.

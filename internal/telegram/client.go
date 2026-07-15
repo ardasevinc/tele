@@ -3,12 +3,10 @@ package telegram
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,7 +19,6 @@ import (
 	gotdpeer "github.com/gotd/td/telegram/message/peer"
 	gotdmessages "github.com/gotd/td/telegram/query/messages"
 	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
 	"golang.org/x/term"
 
 	"github.com/ardasevinc/tele/internal/buildinfo"
@@ -605,183 +602,6 @@ func atomicDownload(path string, download func(io.WriterAt) (tg.StorageFileTypeC
 	return storage, err
 }
 
-func (a App) Send(ctx context.Context, peerToken, text string, replyTo int) (MutationResult, error) {
-	return a.send(ctx, peerToken, text, replyTo, "send")
-}
-
-func (a App) PreviewMutation(ctx context.Context, action, peerToken string, msgID int, scope DeleteScope) (MutationPreview, error) {
-	var out MutationPreview
-	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
-		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
-		if err != nil {
-			return err
-		}
-		if err := validateMutationPreview(action, input, scope); err != nil {
-			return err
-		}
-		out = MutationPreview{
-			OK:        true,
-			DryRun:    true,
-			Action:    action,
-			PeerRef:   peerRef.Ref,
-			MessageID: msgID,
-			Scope:     scope,
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-		}
-		return nil
-	})
-	return out, err
-}
-
-func validateMutationPreview(action string, input tg.InputPeerClass, scope DeleteScope) error {
-	switch action {
-	case "send", "reply", "react", "edit":
-		return nil
-	case "delete":
-		_, err := planDelete(input, scope)
-		return err
-	default:
-		return fmt.Errorf("unsupported mutation action %q", action)
-	}
-}
-
-func (a App) Edit(ctx context.Context, peerToken string, msgID int, text string) (MutationResult, error) {
-	var out MutationResult
-	handle := mutationHandle("edit", peerToken, msgID)
-	dispatched := false
-	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
-		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
-		if err != nil {
-			return err
-		}
-		handle = mutationHandle("edit", peerRef.Ref, msgID)
-		req := &tg.MessagesEditMessageRequest{Peer: input, ID: msgID}
-		req.SetMessage(strings.TrimSpace(text))
-		dispatched = true
-		if _, err := c.API().MessagesEditMessage(ctx, req); err != nil {
-			return err
-		}
-		out = mutationResult("edit", peerRef.Ref, msgID, handle)
-		return nil
-	})
-	return out, mutationFailure(err, dispatched, handle)
-}
-
-func (a App) React(ctx context.Context, peerToken string, msgID int, emoji string) (MutationResult, error) {
-	var out MutationResult
-	handle := mutationHandle("react", peerToken, msgID)
-	dispatched := false
-	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
-		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
-		if err != nil {
-			return err
-		}
-		handle = mutationHandle("react", peerRef.Ref, msgID)
-		req := &tg.MessagesSendReactionRequest{
-			Peer:        input,
-			MsgID:       msgID,
-			AddToRecent: true,
-		}
-		req.SetReaction([]tg.ReactionClass{&tg.ReactionEmoji{Emoticon: strings.TrimSpace(emoji)}})
-		dispatched = true
-		if _, err := c.API().MessagesSendReaction(ctx, req); err != nil {
-			return err
-		}
-		out = mutationResult("react", peerRef.Ref, msgID, handle)
-		return nil
-	})
-	return out, mutationFailure(err, dispatched, handle)
-}
-
-func (a App) DeleteMessage(ctx context.Context, peerToken string, msgID int, scope DeleteScope) (MutationResult, error) {
-	var out MutationResult
-	handle := mutationHandle("delete", peerToken, msgID)
-	dispatched := false
-	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
-		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
-		if err != nil {
-			return err
-		}
-		plan, err := planDelete(input, scope)
-		if err != nil {
-			return err
-		}
-		handle = mutationHandle("delete", peerRef.Ref, msgID)
-		switch plan.Route {
-		case deleteRouteChannels:
-			dispatched = true
-			_, err = c.API().ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{
-				Channel: plan.Channel,
-				ID:      []int{msgID},
-			})
-		case deleteRouteMessages:
-			req := &tg.MessagesDeleteMessagesRequest{ID: []int{msgID}}
-			req.SetRevoke(plan.Revoke)
-			dispatched = true
-			_, err = c.API().MessagesDeleteMessages(ctx, req)
-		default:
-			return fmt.Errorf("unsupported delete route %q", plan.Route)
-		}
-		if err != nil {
-			return err
-		}
-		out = mutationResult("delete", peerRef.Ref, msgID, handle)
-		out.MessageIDs = []int{msgID}
-		return nil
-	})
-	return out, mutationFailure(err, dispatched, handle)
-}
-
-func planDelete(input tg.InputPeerClass, scope DeleteScope) (deletePlan, error) {
-	if scope != DeleteScopeForMe && scope != DeleteScopeRevoke {
-		return deletePlan{}, fmt.Errorf("unsupported delete scope %q", scope)
-	}
-	if channel, ok := input.(*tg.InputPeerChannel); ok {
-		if scope != DeleteScopeRevoke {
-			return deletePlan{}, fmt.Errorf("channel and supergroup messages can only be deleted with --revoke --yes")
-		}
-		return deletePlan{
-			Route:   deleteRouteChannels,
-			Channel: &tg.InputChannel{ChannelID: channel.ChannelID, AccessHash: channel.AccessHash},
-		}, nil
-	}
-	return deletePlan{Route: deleteRouteMessages, Revoke: scope == DeleteScopeRevoke}, nil
-}
-
-func (a App) send(ctx context.Context, peerToken, text string, replyTo int, action string) (MutationResult, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return MutationResult{}, fmt.Errorf("message text is required")
-	}
-	var out MutationResult
-	requestID := randomID()
-	handle := "random_id:" + strconv.FormatInt(requestID, 10)
-	dispatched := false
-	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
-		input, peerRef, err := a.resolvePeer(ctx, c, peerToken)
-		if err != nil {
-			return err
-		}
-		req := &tg.MessagesSendMessageRequest{
-			Peer:      input,
-			Message:   text,
-			RandomID:  requestID,
-			NoWebpage: true,
-		}
-		if replyTo > 0 {
-			req.SetReplyTo(&tg.InputReplyToMessage{ReplyToMsgID: replyTo})
-		}
-		dispatched = true
-		updates, err := c.API().MessagesSendMessage(ctx, req)
-		if err != nil {
-			return err
-		}
-		out = mutationResult(action, peerRef.Ref, sentMessageID(updates), handle)
-		return nil
-	})
-	return out, mutationFailure(err, dispatched, handle)
-}
-
 func (a App) pendingAuth(ctx context.Context) (authPending, error) {
 	b, err := a.Secrets.Get(ctx, a.Profile, authPendingKey)
 	if errors.Is(err, secrets.ErrNotFound) {
@@ -1051,101 +871,6 @@ func safeDownloadFileName(msgID int, name string) string {
 		}
 	}, name)
 	return fmt.Sprintf("%d-%s", msgID, name)
-}
-
-func mutationResult(action, peerRef string, msgID int, handle string) MutationResult {
-	return MutationResult{
-		OK:                   true,
-		Outcome:              MutationConfirmed,
-		RetrySafe:            false,
-		Action:               action,
-		PeerRef:              peerRef,
-		MessageID:            msgID,
-		ReconciliationHandle: handle,
-		Timestamp:            time.Now().UTC().Format(time.RFC3339),
-	}
-}
-
-func mutationHandle(action, peerRef string, msgID int) string {
-	return fmt.Sprintf("action:%s/peer:%s/message:%d", action, peerRef, msgID)
-}
-
-func mutationFailure(err error, dispatched bool, handle string) error {
-	if err == nil {
-		return nil
-	}
-	outcome := MutationRejected
-	retrySafe := !dispatched
-	if dispatched {
-		if _, ok := tgerr.As(err); ok {
-			retrySafe = true
-		} else {
-			outcome = MutationOutcomeUnknown
-			retrySafe = false
-		}
-	}
-	return MutationError{
-		Outcome:              outcome,
-		RetrySafe:            retrySafe,
-		ReconciliationHandle: handle,
-		Err:                  err,
-	}
-}
-
-func randomID() int64 {
-	n, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 63))
-	if err != nil {
-		return time.Now().UnixNano()
-	}
-	return n.Int64()
-}
-
-func sentMessageID(updates tg.UpdatesClass) int {
-	switch v := updates.(type) {
-	case *tg.Updates:
-		for _, update := range v.Updates {
-			if msgID := messageIDFromUpdate(update); msgID != 0 {
-				return msgID
-			}
-		}
-	case *tg.UpdateShortSentMessage:
-		return v.ID
-	case *tg.UpdateShortMessage:
-		return v.ID
-	case *tg.UpdateShortChatMessage:
-		return v.ID
-	case *tg.UpdateShort:
-		return messageIDFromUpdate(v.Update)
-	case *tg.UpdatesCombined:
-		for _, update := range v.Updates {
-			if msgID := messageIDFromUpdate(update); msgID != 0 {
-				return msgID
-			}
-		}
-	}
-	return 0
-}
-
-func messageIDFromUpdate(update tg.UpdateClass) int {
-	switch v := update.(type) {
-	case *tg.UpdateNewMessage:
-		if msg, ok := v.Message.(*tg.Message); ok {
-			return msg.ID
-		}
-	case *tg.UpdateNewChannelMessage:
-		if msg, ok := v.Message.(*tg.Message); ok {
-			return msg.ID
-		}
-	case *tg.UpdateEditMessage:
-		if msg, ok := v.Message.(*tg.Message); ok {
-			return msg.ID
-		}
-	case *tg.UpdateEditChannelMessage:
-		if msg, ok := v.Message.(*tg.Message); ok {
-			return msg.ID
-		}
-	}
-	return 0
 }
 
 func unixDate(ts int) string {

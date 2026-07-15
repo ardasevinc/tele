@@ -131,11 +131,10 @@ func TestWriteTranscript(t *testing.T) {
 	var out bytes.Buffer
 	state := &appState{out: &out}
 	meta := output.Meta{
-		Profile:     "main",
-		PeerRef:     "user:1",
-		FetchedAt:   "2026-05-15T11:25:34Z",
-		Limit:       50,
-		SideEffects: []string{"may_mark_read"},
+		Profile:   "main",
+		PeerRef:   "user:1",
+		FetchedAt: "2026-05-15T11:25:34Z",
+		Limit:     50,
 	}
 	messages := []tgapp.Message{
 		{
@@ -159,7 +158,6 @@ func TestWriteTranscript(t *testing.T) {
 	for _, want := range []string{
 		"peer: user:1 (Hakan abi @hakankozakli)",
 		"fetched_at: 2026-05-15T11:25:34Z",
-		"side_effects: may_mark_read",
 		"messages: 2",
 		"-- 2026-05-13 --",
 		"[10] 12:01 them: hello",

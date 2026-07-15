@@ -350,14 +350,12 @@ func readCommand(s *appState) *cobra.Command {
 			if format == "transcript" && !s.json && !s.jsonl {
 				opts.Chronological = true
 			}
-			w := s.writer()
-			w.Warn("read may mark Telegram messages read")
 			opts.Cursor = cursor
 			page, err := app.Read(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}
-			meta := s.telegramMeta(cmd.Context(), app, limit, args[0], []string{"may_mark_read"})
+			meta := s.telegramMeta(cmd.Context(), app, limit, args[0], nil)
 			applyRetrievalReceipt(&meta, page.Receipt)
 			if format == "transcript" && !s.json && !s.jsonl {
 				return writeTranscript(s, page.Items, meta, app.PeerInfo(args[0]))
@@ -391,13 +389,11 @@ func searchCommand(s *appState) *cobra.Command {
 				return err
 			}
 			limit = s.defaultLimit(limit)
-			w := s.writer()
-			w.Warn("search reads may mark Telegram messages read")
 			page, err := app.Search(cmd.Context(), tgapp.SearchOptions{Query: args[0], Peer: chat, Limit: limit, Cursor: cursor})
 			if err != nil {
 				return err
 			}
-			meta := s.telegramMeta(cmd.Context(), app, limit, chat, []string{"may_mark_read"})
+			meta := s.telegramMeta(cmd.Context(), app, limit, chat, nil)
 			applyRetrievalReceipt(&meta, page.Receipt)
 			return writeMessages(s, page.Items, meta)
 		},
@@ -430,7 +426,6 @@ func exportCommand(s *appState) *cobra.Command {
 			if format == "jsonl" {
 				s.jsonl = true
 			}
-			s.writer().Warn("export reads may mark Telegram messages read")
 			opts := tgapp.ReadOptions{Peer: args[0], Limit: limit, Chronological: format == "transcript", Cursor: cursor}
 			if since != "" {
 				opts.Since, err = parseTimeFilter(since, time.Now())
@@ -448,7 +443,7 @@ func exportCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			meta := s.telegramMeta(cmd.Context(), app, limit, args[0], []string{"may_mark_read"})
+			meta := s.telegramMeta(cmd.Context(), app, limit, args[0], nil)
 			applyRetrievalReceipt(&meta, page.Receipt)
 			if format == "jsonl" {
 				return writeMessages(s, page.Items, meta)

@@ -400,7 +400,6 @@ type Message struct {
 	Post                 bool            `json:"post,omitempty"`
 	Media                string          `json:"media,omitempty"`
 	Service              string          `json:"service,omitempty"`
-	SideEffects          []string        `json:"side_effects,omitempty"`
 	SourcePeerRef        string          `json:"source_peer_ref,omitempty"`
 	SourcePeerLabel      string          `json:"source_peer_label,omitempty"`
 	SenderPeerRef        string          `json:"sender_peer_ref,omitempty"`

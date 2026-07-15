@@ -93,6 +93,11 @@ message IDs and retrieval metadata without the token cost of full JSON. Use
 typed record per line. The stable machine contract is versioned as `tele/v1`;
 its JSON Schemas live in [`schemas/v1`](schemas/v1).
 
+Migration from alpha.10 and earlier: consumers must accept `tele/v1` instead of
+`tele/v1alpha1` and resolve published schemas under `schemas/v1`. Command data
+fields are unchanged by this namespace promotion, but JSONL `data` records now
+reject shapes outside the same public allowlist used by JSON envelopes.
+
 Media is never auto-downloaded by read/export commands. Use `tele media download`
 for one explicit message; it writes to a new temp directory by default and creates
 the downloaded file with `0600` permissions.

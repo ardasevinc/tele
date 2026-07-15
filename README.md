@@ -7,7 +7,7 @@ is a trademark of its respective owner. This project does not use Telegram's
 logos or visual identity.
 
 It uses Telegram's MTProto API through a user account, not the Telegram Bot API.
-The v1 alpha is intentionally bounded and explicit: auth, profile-aware local
+The v1 surface is intentionally bounded and explicit: auth, profile-aware local
 config, read/search/export, inbox triage, and opt-in message mutations.
 
 ## Status and support
@@ -90,8 +90,8 @@ combination before reading stdin, loading configuration, or contacting Telegram.
 Use transcript output when giving messages directly to an agent. It preserves
 message IDs and retrieval metadata without the token cost of full JSON. Use
 `--json` when another tool needs structured fields, or `--jsonl` for one compact
-typed record per line. Machine output is versioned as `tele/v1alpha1`; its JSON
-Schemas live in [`schemas/v1alpha1`](schemas/v1alpha1).
+typed record per line. The stable machine contract is versioned as `tele/v1`;
+its JSON Schemas live in [`schemas/v1`](schemas/v1).
 
 Media is never auto-downloaded by read/export commands. Use `tele media download`
 for one explicit message; it writes to a new temp directory by default and creates
@@ -154,7 +154,7 @@ downloads neither replace an existing destination nor leave partial files.
 On macOS the config follows `os.UserConfigDir`, normally
 `~/Library/Application Support/tele/config.toml`; profile data lives under
 `~/.local/share/tele/<profile>/`. Other platforms use their Go-native user config
-directory, but v1 alpha secret storage remains macOS Keychain-only.
+directory, but v1 secret storage remains macOS Keychain-only.
 
 ## Untrusted content
 

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ardasevinc/tele/schemas/v1/record.schema.json",
+  "title": "tele v1 JSONL record",
+  "type": "object",
+  "required": ["schema_version", "type"],
+  "properties": {
+    "schema_version": { "const": "tele/v1" },
+    "type": { "enum": ["meta", "data", "error"] },
+    "meta": { "$ref": "envelope.schema.json#/$defs/meta" },
+    "data": { "$ref": "#/$defs/data" },
+    "error": { "$ref": "error.schema.json#/$defs/error" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "data": {
+      "anyOf": [
+        { "$ref": "command-envelope.schema.json#/$defs/auth-status" },
+        { "$ref": "command-envelope.schema.json#/$defs/auth-start" },
+        { "$ref": "command-envelope.schema.json#/$defs/logout" },
+        { "$ref": "command-envelope.schema.json#/$defs/local-auth-reset" },
+        { "$ref": "command-envelope.schema.json#/$defs/account" },
+        { "$ref": "command-envelope.schema.json#/$defs/chat" },
+        { "type": "array", "items": { "$ref": "command-envelope.schema.json#/$defs/chat" } },
+        { "$ref": "command-envelope.schema.json#/$defs/message" },
+        { "type": "array", "items": { "$ref": "command-envelope.schema.json#/$defs/message" } },
+        { "$ref": "command-envelope.schema.json#/$defs/media-download" },
+        { "$ref": "command-envelope.schema.json#/$defs/mutation-result" },
+        { "$ref": "command-envelope.schema.json#/$defs/mutation-preview" },
+        { "$ref": "command-envelope.schema.json#/$defs/config-path" },
+        { "$ref": "command-envelope.schema.json#/$defs/config" },
+        { "$ref": "command-envelope.schema.json#/$defs/api-id" },
+        { "$ref": "command-envelope.schema.json#/$defs/default-profile" },
+        { "$ref": "command-envelope.schema.json#/$defs/ok" },
+        { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        { "$ref": "command-envelope.schema.json#/$defs/profile" },
+        { "$ref": "command-envelope.schema.json#/$defs/doctor" }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "properties": { "type": { "const": "meta" } },
+      "required": ["meta"],
+      "not": { "anyOf": [{ "required": ["data"] }, { "required": ["error"] }] }
+    },
+    {
+      "properties": { "type": { "const": "data" } },
+      "required": ["data"],
+      "not": { "anyOf": [{ "required": ["meta"] }, { "required": ["error"] }] }
+    },
+    {
+      "properties": { "type": { "const": "error" } },
+      "required": ["meta", "error"],
+      "not": { "required": ["data"] }
+    }
+  ]
+}

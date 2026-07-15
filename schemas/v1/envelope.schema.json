@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ardasevinc/tele/schemas/v1alpha1/envelope.schema.json",
-  "title": "tele v1alpha1 JSON envelope",
+  "$id": "https://github.com/ardasevinc/tele/schemas/v1/envelope.schema.json",
+  "title": "tele v1 JSON envelope",
   "type": "object",
   "required": ["schema_version", "meta", "data"],
   "properties": {
-    "schema_version": { "const": "tele/v1alpha1" },
+    "schema_version": { "const": "tele/v1" },
     "meta": { "$ref": "#/$defs/meta" },
     "data": true
   },

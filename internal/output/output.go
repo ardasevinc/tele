@@ -18,7 +18,7 @@ import (
 type Format string
 
 const (
-	SchemaVersion = "tele/v1alpha1"
+	SchemaVersion = "tele/v1"
 
 	Human Format = "human"
 	JSON  Format = "json"

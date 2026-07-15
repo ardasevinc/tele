@@ -353,6 +353,7 @@ func TestEveryPublicCommandHasAValidCanonicalGolden(t *testing.T) {
 	}
 
 	schema := compileCommandEnvelopeSchema(t)
+	recordSchema := compileJSONLRecordSchema(t)
 	for _, command := range gotCommands {
 		t.Run(strings.TrimPrefix(command, "tele "), func(t *testing.T) {
 			var data any
@@ -375,6 +376,17 @@ func TestEveryPublicCommandHasAValidCanonicalGolden(t *testing.T) {
 			}
 			if err := schema.Validate(value); err != nil {
 				t.Fatalf("canonical output does not satisfy command schema: %v\n%s", err, encoded)
+			}
+
+			record, err := json.Marshal(output.DataRecord(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(record, &value); err != nil {
+				t.Fatal(err)
+			}
+			if err := recordSchema.Validate(value); err != nil {
+				t.Fatalf("canonical output does not satisfy JSONL record schema: %v\n%s", err, record)
 			}
 		})
 	}
@@ -421,11 +433,11 @@ func runnableCommandPaths(root *cobra.Command) []string {
 
 func compileCommandEnvelopeSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
-	const base = "https://github.com/ardasevinc/tele/schemas/v1alpha1/"
+	const base = "https://github.com/ardasevinc/tele/schemas/v1/"
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	for _, name := range []string{"envelope.schema.json", "command-envelope.schema.json"} {
-		b, err := os.ReadFile(filepath.Join("..", "..", "schemas", "v1alpha1", name))
+		b, err := os.ReadFile(filepath.Join("..", "..", "schemas", "v1", name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -438,6 +450,31 @@ func compileCommandEnvelopeSchema(t *testing.T) *jsonschema.Schema {
 		}
 	}
 	schema, err := compiler.Compile(base + "command-envelope.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return schema
+}
+
+func compileJSONLRecordSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
+	const base = "https://github.com/ardasevinc/tele/schemas/v1/"
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	for _, name := range []string{"envelope.schema.json", "error.schema.json", "command-envelope.schema.json", "record.schema.json"} {
+		b, err := os.ReadFile(filepath.Join("..", "..", "schemas", "v1", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document any
+		if err := json.Unmarshal(b, &document); err != nil {
+			t.Fatal(err)
+		}
+		if err := compiler.AddResource(base+name, document); err != nil {
+			t.Fatal(err)
+		}
+	}
+	schema, err := compiler.Compile(base + "record.schema.json")
 	if err != nil {
 		t.Fatal(err)
 	}

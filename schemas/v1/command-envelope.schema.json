@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ardasevinc/tele/schemas/v1alpha1/command-envelope.schema.json",
-  "title": "tele v1alpha1 command JSON envelopes",
+  "$id": "https://github.com/ardasevinc/tele/schemas/v1/command-envelope.schema.json",
+  "title": "tele v1 command JSON envelopes",
   "allOf": [
     { "$ref": "envelope.schema.json" },
     {

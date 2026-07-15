@@ -1,5 +1,5 @@
 {
-  "schema_version": "tele/v1alpha1",
+  "schema_version": "tele/v1",
   "meta": {
     "command": "tele search",
     "tele_version": "0.1.0-alpha.6",

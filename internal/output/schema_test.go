@@ -11,7 +11,7 @@ import (
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-const schemaBase = "https://github.com/ardasevinc/tele/schemas/v1alpha1/"
+const schemaBase = "https://github.com/ardasevinc/tele/schemas/v1/"
 
 func TestCanonicalGoldensValidateAgainstPublishedSchemas(t *testing.T) {
 	schemas := compilePublicSchemas(t)
@@ -50,12 +50,24 @@ func TestCanonicalGoldensValidateAgainstPublishedSchemas(t *testing.T) {
 	}
 }
 
+func TestJSONLDataSchemaRejectsUnpublishedFields(t *testing.T) {
+	schema := compilePublicSchemas(t)["record.schema.json"]
+	record := []byte(`{"schema_version":"tele/v1","type":"data","data":{"phone":"+15555550123"}}`)
+	var value any
+	if err := json.Unmarshal(record, &value); err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Validate(value); err == nil {
+		t.Fatal("record schema accepted an unpublished private field")
+	}
+}
+
 func compilePublicSchemas(t *testing.T) map[string]*jsonschema.Schema {
 	t.Helper()
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	for _, name := range []string{"envelope.schema.json", "error.schema.json", "record.schema.json", "command-envelope.schema.json"} {
-		path := filepath.Join("..", "..", "schemas", "v1alpha1", name)
+		path := filepath.Join("..", "..", "schemas", "v1", name)
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

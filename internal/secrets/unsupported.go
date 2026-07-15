@@ -34,5 +34,5 @@ type UnsupportedError struct {
 }
 
 func (e *UnsupportedError) Error() string {
-	return "secret storage is macOS Keychain-only in v1 alpha, current GOOS=" + e.GOOS
+	return "secret storage is macOS Keychain-only in v1, current GOOS=" + e.GOOS
 }

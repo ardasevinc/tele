@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ardasevinc/tele/schemas/v1alpha1/error.schema.json",
-  "title": "tele v1alpha1 JSON error",
+  "$id": "https://github.com/ardasevinc/tele/schemas/v1/error.schema.json",
+  "title": "tele v1 JSON error",
   "type": "object",
   "required": ["schema_version", "meta", "error"],
   "properties": {
-    "schema_version": { "const": "tele/v1alpha1" },
+    "schema_version": { "const": "tele/v1" },
     "meta": { "$ref": "envelope.schema.json#/$defs/meta" },
     "error": { "$ref": "#/$defs/error" }
   },

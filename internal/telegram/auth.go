@@ -298,7 +298,7 @@ func (a *interactiveAuth) Code(ctx context.Context, _ *tg.AuthSentCode) (string,
 
 func (a *interactiveAuth) AcceptTermsOfService(context.Context, tg.HelpTermsOfService) error {
 	_, _ = fmt.Fprintln(a.err, "Telegram returned terms of service; accept them in the official app before continuing.")
-	return fmt.Errorf("terms of service acceptance is not implemented in tele alpha")
+	return fmt.Errorf("terms of service acceptance is not implemented in tele")
 }
 
 func (a *interactiveAuth) SignUp(context.Context) (auth.UserInfo, error) {

@@ -34,14 +34,36 @@ Homebrew on macOS:
 brew install ardasevinc/tap/tele
 ```
 
-Release archives and checksums are attached to each GitHub release. Verify the
-archive checksum before installing the binary.
-
-From source with the Go version declared in `go.mod`:
+Release archives and checksums are attached to [GitHub Releases](https://github.com/ardasevinc/tele/releases/latest).
+Verify the archive checksum and provenance before installing the binary. This
+macOS arm64 example requires the GitHub CLI:
 
 ```sh
-go install github.com/ardasevinc/tele/cmd/tele@latest
+(
+  version=1.0.2
+  asset="tele_${version}_darwin_arm64.tar.gz"
+  tmp="$(mktemp -d)"
+  cd "$tmp"
+  gh release download "v$version" --repo ardasevinc/tele \
+    --pattern checksums.txt --pattern "$asset"
+  grep -F "  $asset" checksums.txt | shasum -a 256 -c -
+  gh attestation verify "$asset" --repo ardasevinc/tele
+  tar -tzf "$asset"
+)
 ```
+
+Use `darwin_amd64`, `linux_arm64`, or `linux_amd64` for another published
+platform.
+
+Install the pinned stable version through the Go module proxy:
+
+```sh
+go install github.com/ardasevinc/tele/cmd/tele@v1.0.2
+```
+
+To intentionally follow the newest published version, replace `@v1.0.2` with
+`@latest`. Go-installed binaries report their module version as provenance;
+release archives and local-checkout installs report the exact source commit.
 
 For a local checkout, `just install` stamps the current commit, installs to
 `GOBIN` (or `GOPATH/bin`), and prints the exact installed path and version.

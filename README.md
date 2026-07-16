@@ -40,15 +40,18 @@ macOS arm64 example requires the GitHub CLI:
 
 ```sh
 (
+  set -eu
   version=1.0.2
   asset="tele_${version}_darwin_arm64.tar.gz"
   tmp="$(mktemp -d)"
   cd "$tmp"
   gh release download "v$version" --repo ardasevinc/tele \
     --pattern checksums.txt --pattern "$asset"
-  grep -F "  $asset" checksums.txt | shasum -a 256 -c -
+  grep -F "  $asset" checksums.txt >"$asset.sha256"
+  shasum -a 256 -c "$asset.sha256"
   gh attestation verify "$asset" --repo ardasevinc/tele
-  tar -tzf "$asset"
+  tar -xzf "$asset"
+  printf 'verified tele extracted to: %s\n' "$tmp"
 )
 ```
 

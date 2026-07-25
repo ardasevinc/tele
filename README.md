@@ -6,9 +6,11 @@
 is a trademark of its respective owner. This project does not use Telegram's
 logos or visual identity.
 
-It uses Telegram's MTProto API through a user account, not the Telegram Bot API.
-The v1 surface is intentionally bounded and explicit: auth, profile-aware local
-config, read/search/export, inbox triage, and opt-in message mutations.
+It primarily uses Telegram's MTProto API through a user account. The managed-bot
+factory additionally uses the official Bot API through an explicitly configured
+manager bot. The v1 surface is intentionally bounded and explicit: auth,
+profile-aware local config, read/search/export, inbox triage, opt-in message
+mutations, and managed-bot creation and token custody.
 
 ## Status and support
 
@@ -22,9 +24,10 @@ contracts; urgent safety fixes may narrow behavior that cannot remain safe.
 | Linux arm64/amd64 | preview build only | not implemented yet |
 | Windows amd64 | compile-smoke only | not implemented |
 
-On macOS, API hashes and the session-encryption key are stored in Keychain;
-encrypted MTProto session bytes live under the profile data directory. tele does
-not fall back to plaintext secrets on unsupported platforms.
+On macOS, API hashes, the session-encryption key, manager-bot credentials, and
+managed child-bot tokens are stored in Keychain; encrypted MTProto session bytes
+live under the profile data directory. tele does not fall back to plaintext
+secrets on unsupported platforms.
 
 ## Install
 
@@ -93,6 +96,52 @@ For one-shot interactive login, `tele auth login` still works.
 local encrypted session material. Use `tele auth reset-local --yes` when you
 intend to delete the encrypted session, its Keychain key, and pending split-auth
 state. Pending split-auth attempts expire locally after 15 minutes.
+
+## Managed bot factory
+
+Telegram's Bot Management Mode lets a dedicated manager bot control bots that
+remain owned by the authenticated user. tele uses the user session to check
+usernames and create bots, then uses the manager bot only to retrieve or replace
+managed child tokens.
+
+Enable Bot Management Mode for a dedicated bot in `@BotFather`, then configure
+its token without placing it in argv:
+
+```sh
+tele bots manager configure @ManagerBot
+# or, for automation:
+printf '%s\n' "$TELE_MANAGER_TOKEN" |
+  tele bots manager configure @ManagerBot --token-stdin
+tele bots manager status
+```
+
+Create and inspect a managed bot:
+
+```sh
+tele bots username check ExampleWorkerBot
+tele bots create ExampleWorkerBot --name "Example Worker"
+tele bots list
+tele bots inspect @ExampleWorkerBot
+```
+
+`bots list` is a local inventory, not a remote enumeration of every bot owned by
+the account. It lives at `~/.local/share/tele/<profile>/bots.json`, uses private
+atomic writes, and contains bot identity and reconciliation metadata but no
+tokens.
+
+Synchronize the current remote token non-destructively, or explicitly rotate it:
+
+```sh
+tele bots token sync @ExampleWorkerBot
+tele bots token rotate @ExampleWorkerBot --yes
+```
+
+Ordinary output never returns manager or child tokens. Creation stores a durable
+inventory receipt before requesting the child token, then escrows the token in
+Keychain. Post-dispatch ambiguity and failures after confirmed creation or
+rotation exit with code `7` and a reconciliation handle. Do not retry those
+operations blindly; use inventory inspection or non-destructive token sync
+first.
 
 ## Agent surface
 
@@ -202,12 +251,13 @@ confirmation for consequential actions. Regexes cannot determine whether prose
 is malicious instruction.
 
 Machine output never includes tele's configured API hashes, 2FA passwords,
-pending phone-code hashes, session keys, or account phone numbers. Public config
-and auth objects are explicit allowlists. Login codes, 2FA passwords, and API
-hashes cannot be passed as literal command-line arguments; use hidden prompts or
-named environment-variable flags so they do not enter shell history or process
-argv. Message bodies may independently contain sensitive content and are
-returned unchanged.
+pending phone-code hashes, session keys, manager-bot tokens, managed child-bot
+tokens, or account phone numbers. Public config, auth, and managed-bot objects
+are explicit allowlists. Login codes, 2FA passwords, API hashes, and manager
+tokens cannot be passed as literal command-line arguments; use hidden prompts,
+stdin, or named environment-variable flags so they do not enter shell history
+or process argv. Message bodies may independently contain sensitive content and
+are returned unchanged.
 
 ## Exit codes
 

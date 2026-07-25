@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 
@@ -322,7 +323,11 @@ func botManagerConfigureCommand(s *appState) *cobra.Command {
 				return fmt.Errorf("environment variable %s is empty", tokenEnv)
 			}
 			if token == "" {
-				token, err = readSecret(s.in, s.err, "manager token: ")
+				prompt := s.err
+				if tokenStdin {
+					prompt = io.Discard
+				}
+				token, err = readSecret(s.in, prompt, "manager token: ")
 				if err != nil {
 					return err
 				}

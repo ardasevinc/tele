@@ -80,6 +80,9 @@ func TestBotManagerConfigureStoresTokenWithoutEmittingIt(t *testing.T) {
 	if strings.Contains(stdout.String(), token) || strings.Contains(stderr.String(), token) {
 		t.Fatalf("command leaked token: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
+	if stderr.Len() != 0 {
+		t.Fatalf("--token-stdin emitted a prompt: %q", stderr.String())
+	}
 	if !strings.Contains(string(store.values["factory:bot-manager"]), token) {
 		t.Fatal("manager credential was not stored in the selected profile")
 	}

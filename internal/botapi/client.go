@@ -33,11 +33,11 @@ type ManagedTokenAPI interface {
 }
 
 type AmbiguousResultError struct {
-	err error
+	Err error
 }
 
-func (e AmbiguousResultError) Error() string { return e.err.Error() }
-func (e AmbiguousResultError) Unwrap() error { return e.err }
+func (e AmbiguousResultError) Error() string { return e.Err.Error() }
+func (e AmbiguousResultError) Unwrap() error { return e.Err }
 
 type Client struct {
 	HTTP    *http.Client
@@ -122,16 +122,16 @@ func (c Client) call(ctx context.Context, token, method string, params url.Value
 	response, err := client.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
-			return AmbiguousResultError{err: ctx.Err()}
+			return AmbiguousResultError{Err: ctx.Err()}
 		}
-		return AmbiguousResultError{err: errors.New("telegram Bot API request failed")}
+		return AmbiguousResultError{Err: errors.New("telegram Bot API request failed")}
 	}
 	defer func() { _ = response.Body.Close() }()
 
 	decoder := json.NewDecoder(io.LimitReader(response.Body, maxResponse))
 	var envelope responseEnvelope
 	if err := decoder.Decode(&envelope); err != nil {
-		return AmbiguousResultError{err: errors.New("telegram Bot API returned an invalid response")}
+		return AmbiguousResultError{Err: errors.New("telegram Bot API returned an invalid response")}
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices || !envelope.OK {
 		description := strings.TrimSpace(strings.ReplaceAll(envelope.Description, token, "[redacted]"))
@@ -141,10 +141,10 @@ func (c Client) call(ctx context.Context, token, method string, params url.Value
 		return fmt.Errorf("telegram Bot API error %d: %s", envelope.ErrorCode, description)
 	}
 	if len(envelope.Result) == 0 || string(envelope.Result) == "null" {
-		return AmbiguousResultError{err: errors.New("telegram Bot API response is missing a result")}
+		return AmbiguousResultError{Err: errors.New("telegram Bot API response is missing a result")}
 	}
 	if err := json.Unmarshal(envelope.Result, result); err != nil {
-		return AmbiguousResultError{err: errors.New("telegram Bot API returned an invalid result")}
+		return AmbiguousResultError{Err: errors.New("telegram Bot API returned an invalid result")}
 	}
 	return nil
 }

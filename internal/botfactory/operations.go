@@ -156,7 +156,7 @@ func updateToken(
 	if err := StoreManagedBotToken(ctx, secretStore, profile, bot.ID, token); err != nil {
 		if rotate {
 			return TokenOperationResult{}, confirmedCreationError(handle, fmt.Errorf(
-				"Telegram rotated the token for @%s, but local token escrow failed: %w",
+				"telegram rotated the token for @%s, but local token escrow failed: %w",
 				bot.Username,
 				err,
 			))
@@ -168,7 +168,7 @@ func updateToken(
 	if err != nil {
 		if rotate {
 			return TokenOperationResult{}, confirmedCreationError(handle, fmt.Errorf(
-				"Telegram rotated and tele securely stored the token for @%s, but the sync receipt could not be recorded: %w",
+				"telegram rotated and tele securely stored the token for @%s, but the sync receipt could not be recorded: %w",
 				bot.Username,
 				err,
 			))

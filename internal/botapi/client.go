@@ -88,7 +88,7 @@ func (c Client) managedBotToken(
 		return "", err
 	}
 	if strings.TrimSpace(token) == "" {
-		return "", errors.New("Telegram Bot API returned an empty managed bot token")
+		return "", errors.New("telegram Bot API returned an empty managed bot token")
 	}
 	return token, nil
 }

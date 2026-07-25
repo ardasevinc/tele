@@ -80,7 +80,7 @@ func Create(
 	if err != nil {
 		return CreationResult{}, confirmedCreationError(
 			handle,
-			fmt.Errorf("Telegram created @%s, but its local inventory receipt could not be stored: %w", created.Username, err),
+			fmt.Errorf("telegram created @%s, but its local inventory receipt could not be stored: %w", created.Username, err),
 		)
 	}
 
@@ -88,13 +88,13 @@ func Create(
 	if err != nil {
 		return CreationResult{}, confirmedCreationError(
 			handle,
-			fmt.Errorf("Telegram created @%s and stored its inventory receipt, but its token could not be retrieved: %w", created.Username, err),
+			fmt.Errorf("telegram created @%s and stored its inventory receipt, but its token could not be retrieved: %w", created.Username, err),
 		)
 	}
 	if err := StoreManagedBotToken(ctx, secretStore, profile, created.ID, token); err != nil {
 		return CreationResult{}, confirmedCreationError(
 			handle,
-			fmt.Errorf("Telegram created @%s and stored its inventory receipt, but its token escrow failed: %w", created.Username, err),
+			fmt.Errorf("telegram created @%s and stored its inventory receipt, but its token escrow failed: %w", created.Username, err),
 		)
 	}
 
@@ -103,7 +103,7 @@ func Create(
 	if err != nil {
 		return CreationResult{}, confirmedCreationError(
 			handle,
-			fmt.Errorf("Telegram created @%s and securely stored its token, but the token-sync receipt could not be recorded: %w", created.Username, err),
+			fmt.Errorf("telegram created @%s and securely stored its token, but the token-sync receipt could not be recorded: %w", created.Username, err),
 		)
 	}
 	return CreationResult{

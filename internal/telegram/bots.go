@@ -169,7 +169,7 @@ func createManagedBot(
 
 	user, ok := created.(*tg.User)
 	if !ok || user.ID == 0 || !user.Bot {
-		attempt.err = fmt.Errorf("Telegram confirmed bot creation but returned an invalid bot identity")
+		attempt.err = fmt.Errorf("telegram confirmed bot creation but returned an invalid bot identity")
 		return attempt
 	}
 	returnedUsername := username
@@ -177,7 +177,7 @@ func createManagedBot(
 		returnedUsername = value
 	}
 	if !strings.EqualFold(returnedUsername, username) {
-		attempt.err = fmt.Errorf("Telegram confirmed bot creation but returned @%s instead of @%s", returnedUsername, username)
+		attempt.err = fmt.Errorf("telegram confirmed bot creation but returned @%s instead of @%s", returnedUsername, username)
 		return attempt
 	}
 	accessHash, _ := user.GetAccessHash()

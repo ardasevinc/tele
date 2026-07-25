@@ -27,6 +27,10 @@ type ManagerAPI interface {
 	GetMe(context.Context, string) (Bot, error)
 }
 
+type ManagedTokenAPI interface {
+	GetManagedBotToken(context.Context, string, int64) (string, error)
+}
+
 type Client struct {
 	HTTP    *http.Client
 	BaseURL string
@@ -44,10 +48,28 @@ func (c Client) GetMe(ctx context.Context, token string) (Bot, error) {
 	if strings.TrimSpace(token) == "" {
 		return bot, errors.New("manager token is required")
 	}
-	if err := c.call(ctx, token, "getMe", &bot); err != nil {
+	if err := c.call(ctx, token, "getMe", nil, &bot); err != nil {
 		return bot, err
 	}
 	return bot, nil
+}
+
+func (c Client) GetManagedBotToken(ctx context.Context, managerToken string, botID int64) (string, error) {
+	if strings.TrimSpace(managerToken) == "" {
+		return "", errors.New("manager token is required")
+	}
+	if botID == 0 {
+		return "", errors.New("managed bot ID is required")
+	}
+	var token string
+	params := url.Values{"user_id": {fmt.Sprintf("%d", botID)}}
+	if err := c.call(ctx, managerToken, "getManagedBotToken", params, &token); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(token) == "" {
+		return "", errors.New("Telegram Bot API returned an empty managed bot token")
+	}
+	return token, nil
 }
 
 type responseEnvelope struct {
@@ -57,7 +79,7 @@ type responseEnvelope struct {
 	Description string          `json:"description"`
 }
 
-func (c Client) call(ctx context.Context, token, method string, result any) error {
+func (c Client) call(ctx context.Context, token, method string, params url.Values, result any) error {
 	baseURL := strings.TrimRight(c.BaseURL, "/")
 	if baseURL == "" {
 		baseURL = defaultBaseURL
@@ -67,6 +89,7 @@ func (c Client) call(ctx context.Context, token, method string, result any) erro
 		return errors.New("telegram Bot API base URL is invalid")
 	}
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/bot" + token + "/" + method
+	endpoint.RawQuery = params.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
 		return errors.New("telegram Bot API request could not be created")

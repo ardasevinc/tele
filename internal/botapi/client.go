@@ -1,0 +1,106 @@
+package botapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+)
+
+const (
+	defaultBaseURL = "https://api.telegram.org"
+	maxResponse    = 1 << 20
+)
+
+type Bot struct {
+	ID            int64  `json:"id"`
+	IsBot         bool   `json:"is_bot"`
+	Username      string `json:"username"`
+	CanManageBots bool   `json:"can_manage_bots"`
+}
+
+type ManagerAPI interface {
+	GetMe(context.Context, string) (Bot, error)
+}
+
+type Client struct {
+	HTTP    *http.Client
+	BaseURL string
+}
+
+func NewClient(httpClient *http.Client) Client {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	return Client{HTTP: httpClient, BaseURL: defaultBaseURL}
+}
+
+func (c Client) GetMe(ctx context.Context, token string) (Bot, error) {
+	var bot Bot
+	if strings.TrimSpace(token) == "" {
+		return bot, errors.New("manager token is required")
+	}
+	if err := c.call(ctx, token, "getMe", &bot); err != nil {
+		return bot, err
+	}
+	return bot, nil
+}
+
+type responseEnvelope struct {
+	OK          bool            `json:"ok"`
+	Result      json.RawMessage `json:"result"`
+	ErrorCode   int             `json:"error_code"`
+	Description string          `json:"description"`
+}
+
+func (c Client) call(ctx context.Context, token, method string, result any) error {
+	baseURL := strings.TrimRight(c.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
+	endpoint, err := url.Parse(baseURL)
+	if err != nil {
+		return errors.New("telegram Bot API base URL is invalid")
+	}
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/bot" + token + "/" + method
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return errors.New("telegram Bot API request could not be created")
+	}
+	client := c.HTTP
+	if client == nil {
+		client = http.DefaultClient
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errors.New("telegram Bot API request failed")
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	decoder := json.NewDecoder(io.LimitReader(response.Body, maxResponse))
+	var envelope responseEnvelope
+	if err := decoder.Decode(&envelope); err != nil {
+		return errors.New("telegram Bot API returned an invalid response")
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices || !envelope.OK {
+		description := strings.TrimSpace(strings.ReplaceAll(envelope.Description, token, "[redacted]"))
+		if description == "" {
+			description = http.StatusText(response.StatusCode)
+		}
+		return fmt.Errorf("telegram Bot API error %d: %s", envelope.ErrorCode, description)
+	}
+	if len(envelope.Result) == 0 || string(envelope.Result) == "null" {
+		return errors.New("telegram Bot API response is missing a result")
+	}
+	if err := json.Unmarshal(envelope.Result, result); err != nil {
+		return errors.New("telegram Bot API returned an invalid result")
+	}
+	return nil
+}

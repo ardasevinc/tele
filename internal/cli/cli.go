@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/ardasevinc/tele/internal/botapi"
 	"github.com/ardasevinc/tele/internal/buildinfo"
 	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/output"
@@ -69,6 +70,7 @@ type appState struct {
 	secretBackend           string
 	secretBackendSupported  bool
 	secretBackendConfigured bool
+	managerAPI              botapi.ManagerAPI
 
 	in  io.Reader
 	out io.Writer
@@ -156,6 +158,7 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 	commands = append(commands, mutationCommands(s)...)
 	cmd.AddCommand(commands...)
 	cmd.AddCommand(configCommand(s), profilesCommand(s), doctorCommand(s))
+	cmd.AddCommand(botsCommand(s))
 	cmd.AddCommand(&cobra.Command{
 		Use:    "whoami",
 		Hidden: true,
@@ -204,6 +207,14 @@ func (s *appState) secretBackendInfo() (string, bool) {
 		return s.secretBackend, s.secretBackendSupported
 	}
 	return secrets.Backend()
+}
+
+func (s *appState) botManagerAPI() botapi.ManagerAPI {
+	if s.managerAPI != nil {
+		return s.managerAPI
+	}
+	client := botapi.NewClient(nil)
+	return client
 }
 
 func (s *appState) writer() output.Writer {

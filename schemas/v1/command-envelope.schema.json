@@ -107,6 +107,12 @@
             "meta": { "$ref": "#/$defs/doctor-command" },
             "data": { "$ref": "#/$defs/doctor" }
           }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/bot-manager-command" },
+            "data": { "$ref": "#/$defs/bot-manager-status" }
+          }
         }
       ]
     }
@@ -176,6 +182,12 @@
     },
     "doctor-command": {
       "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele doctor" } } }]
+    },
+    "bot-manager-command": {
+      "allOf": [
+        { "$ref": "#/$defs/command-meta" },
+        { "properties": { "command": { "enum": ["tele bots manager configure", "tele bots manager status"] } } }
+      ]
     },
     "account": {
       "type": "object",
@@ -369,6 +381,20 @@
       "type": "object",
       "required": ["ok"],
       "properties": { "ok": { "const": true } },
+      "additionalProperties": false
+    },
+    "bot-manager-status": {
+      "type": "object",
+      "required": ["configured", "verified", "token_stored"],
+      "properties": {
+        "configured": { "type": "boolean" },
+        "verified": { "type": "boolean" },
+        "id": { "type": "integer", "minimum": 1 },
+        "username": { "type": "string", "minLength": 1 },
+        "can_manage_bots": { "type": "boolean" },
+        "token_stored": { "type": "boolean" },
+        "secret_backend": { "type": "string", "minLength": 1 }
+      },
       "additionalProperties": false
     },
     "doctor": {

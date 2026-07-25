@@ -119,6 +119,12 @@
             "meta": { "$ref": "#/$defs/bot-username-command" },
             "data": { "$ref": "#/$defs/bot-username-check" }
           }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/bot-create-command" },
+            "data": { "$ref": "#/$defs/bot-creation-result" }
+          }
         }
       ]
     }
@@ -197,6 +203,9 @@
     },
     "bot-username-command": {
       "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele bots username check" } } }]
+    },
+    "bot-create-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele bots create" } } }]
     },
     "account": {
       "type": "object",
@@ -413,6 +422,45 @@
         "username": { "type": "string", "minLength": 5, "maxLength": 32 },
         "available": { "type": "boolean" },
         "checked_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "bot-receipt": {
+      "type": "object",
+      "required": ["ref", "id", "username", "name", "manager_id", "manager_username", "created_at", "updated_at"],
+      "properties": {
+        "ref": { "type": "string", "pattern": "^bot:[0-9]+$" },
+        "id": { "type": "integer", "minimum": 1 },
+        "username": { "type": "string", "minLength": 5, "maxLength": 32 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "manager_id": { "type": "integer", "minimum": 1 },
+        "manager_username": { "type": "string", "minLength": 1 },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "token_synced_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "bot-token-receipt": {
+      "type": "object",
+      "required": ["stored", "secret_backend"],
+      "properties": {
+        "stored": { "const": true },
+        "secret_backend": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "bot-creation-result": {
+      "type": "object",
+      "required": ["ok", "outcome", "retry_safe", "bot", "token", "reconciliation_handle", "timestamp"],
+      "properties": {
+        "ok": { "const": true },
+        "outcome": { "const": "confirmed" },
+        "retry_safe": { "const": false },
+        "bot": { "$ref": "#/$defs/bot-receipt" },
+        "token": { "$ref": "#/$defs/bot-token-receipt" },
+        "reconciliation_handle": { "type": "string", "minLength": 1 },
+        "timestamp": { "type": "string", "format": "date-time" }
       },
       "additionalProperties": false
     },

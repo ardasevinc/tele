@@ -5,6 +5,7 @@
   "tele auth reset-local": {"local_auth_deleted":true},
   "tele auth start": {"profile":"main","code_sent":true,"code_type":"app","timeout_seconds":60},
   "tele auth status": {"profile":"main","authorized":true,"account":{"id":42,"username":"arda","first_name":"Arda"}},
+  "tele bots create": {"ok":true,"outcome":"confirmed","retry_safe":false,"bot":{"ref":"bot:42","id":42,"username":"disposable_agent_bot","name":"Disposable Agent","manager_id":8947673763,"manager_username":"GermanShepherdManagerBot","created_at":"2026-07-25T12:00:00Z","updated_at":"2026-07-25T12:00:01Z","token_synced_at":"2026-07-25T12:00:00Z"},"token":{"stored":true,"secret_backend":"macOS Keychain"},"reconciliation_handle":"managed-bot:@disposable_agent_bot","timestamp":"2026-07-25T12:00:01Z"},
   "tele bots manager configure": {"configured":true,"verified":true,"id":8947673763,"username":"GermanShepherdManagerBot","can_manage_bots":true,"token_stored":true,"secret_backend":"macOS Keychain"},
   "tele bots manager status": {"configured":true,"verified":true,"id":8947673763,"username":"GermanShepherdManagerBot","can_manage_bots":true,"token_stored":true,"secret_backend":"macOS Keychain"},
   "tele bots username check": {"username":"disposable_agent_bot","available":true,"checked_at":"2026-07-25T12:00:00Z"},

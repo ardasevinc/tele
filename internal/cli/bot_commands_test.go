@@ -8,7 +8,10 @@ import (
 	"testing"
 
 	"github.com/ardasevinc/tele/internal/botapi"
+	"github.com/ardasevinc/tele/internal/botfactory"
+	"github.com/ardasevinc/tele/internal/botstore"
 	"github.com/ardasevinc/tele/internal/secrets"
+	"github.com/ardasevinc/tele/internal/telegram"
 )
 
 type botCommandStore struct {
@@ -129,5 +132,107 @@ func TestBotManagerStatusReportsMissingConfigurationWithoutCallingTelegram(t *te
 	if !strings.Contains(stdout.String(), `"configured": false`) ||
 		!strings.Contains(stdout.String(), `"token_stored": false`) {
 		t.Fatalf("status output = %s", stdout.String())
+	}
+}
+
+type botCommandCreator struct {
+	bot     telegram.ManagedBot
+	options telegram.ManagedBotCreateOptions
+}
+
+func (c *botCommandCreator) CreateManagedBot(
+	_ context.Context,
+	options telegram.ManagedBotCreateOptions,
+) (telegram.ManagedBot, error) {
+	c.options = options
+	return c.bot, nil
+}
+
+type botCommandTokenAPI struct {
+	managerToken string
+	token        string
+}
+
+func (a *botCommandTokenAPI) GetManagedBotToken(
+	_ context.Context,
+	managerToken string,
+	_ int64,
+) (string, error) {
+	a.managerToken = managerToken
+	return a.token, nil
+}
+
+func TestBotsCreateEscrowsTokenWithoutEmittingIt(t *testing.T) {
+	const managerToken = "7:manager-secret"
+	const childToken = "42:child-secret"
+	var stdout, stderr bytes.Buffer
+	store := &botCommandStore{values: map[string][]byte{}}
+	managerAPI := &botCommandAPI{bot: botapi.Bot{
+		ID: 7, IsBot: true, Username: "ManagerBot", CanManageBots: true,
+	}}
+	if _, err := botfactory.ConfigureManager(
+		context.Background(),
+		store,
+		managerAPI,
+		"default",
+		"ManagerBot",
+		managerToken,
+		"test keychain",
+	); err != nil {
+		t.Fatal(err)
+	}
+	creator := &botCommandCreator{bot: telegram.ManagedBot{
+		ID: 42, AccessHash: 99, Username: "FactoryChildBot", Name: "Factory Child",
+		ManagerID: 7, ManagerUsername: "ManagerBot",
+	}}
+	tokenAPI := &botCommandTokenAPI{token: childToken}
+	inventory := botstore.New(t.TempDir(), "default")
+	state := &appState{
+		in:                      strings.NewReader(""),
+		out:                     &stdout,
+		err:                     &stderr,
+		secretStore:             store,
+		secretBackend:           "test keychain",
+		secretBackendSupported:  true,
+		secretBackendConfigured: true,
+		managedBotCreator:       creator,
+		managedTokenAPI:         tokenAPI,
+		botInventory:            &inventory,
+	}
+	if err := executeWithState(context.Background(), []string{
+		"--json",
+		"--config", t.TempDir() + "/config.toml",
+		"bots", "create", "@FactoryChildBot",
+		"--name", "Factory Child",
+	}, state); err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String() + stderr.String()
+	if strings.Contains(output, managerToken) || strings.Contains(output, childToken) {
+		t.Fatalf("command leaked a token: %s", output)
+	}
+	if tokenAPI.managerToken != managerToken {
+		t.Fatal("manager token was not used for child token retrieval")
+	}
+	if _, ok := store.values["default:"+botfactory.ManagedBotTokenSecretKey(42)]; !ok {
+		t.Fatal("child token was not escrowed")
+	}
+	if got, err := inventory.Resolve("@FactoryChildBot"); err != nil || got.TokenSyncedAt.IsZero() {
+		t.Fatalf("inventory bot=%+v error=%v", got, err)
+	}
+	if !strings.Contains(stdout.String(), `"reconciliation_handle": "managed-bot:@FactoryChildBot"`) {
+		t.Fatalf("output = %s", stdout.String())
+	}
+}
+
+func TestBotsCreateRejectsSafetyModes(t *testing.T) {
+	for _, args := range [][]string{
+		{"--read-only", "bots", "create", "FactoryChildBot", "--name", "Factory Child"},
+		{"--dry-run", "bots", "create", "FactoryChildBot", "--name", "Factory Child"},
+	} {
+		state := &appState{in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{}}
+		if err := executeWithState(context.Background(), args, state); err == nil {
+			t.Fatalf("accepted args %v", args)
+		}
 	}
 }

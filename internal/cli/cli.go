@@ -14,6 +14,8 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ardasevinc/tele/internal/botapi"
+	"github.com/ardasevinc/tele/internal/botfactory"
+	"github.com/ardasevinc/tele/internal/botstore"
 	"github.com/ardasevinc/tele/internal/buildinfo"
 	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/output"
@@ -71,6 +73,9 @@ type appState struct {
 	secretBackendSupported  bool
 	secretBackendConfigured bool
 	managerAPI              botapi.ManagerAPI
+	managedTokenAPI         botapi.ManagedTokenAPI
+	managedBotCreator       botfactory.ManagedBotCreator
+	botInventory            *botstore.Store
 
 	in  io.Reader
 	out io.Writer
@@ -149,8 +154,8 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&s.json, "json", false, "write JSON output")
 	cmd.PersistentFlags().BoolVar(&s.jsonl, "jsonl", false, "write JSONL output")
 	cmd.PersistentFlags().BoolVar(&s.quiet, "quiet", false, "suppress human info output")
-	cmd.PersistentFlags().BoolVar(&s.readOnly, "read-only", false, "reject Telegram message mutations")
-	cmd.PersistentFlags().BoolVar(&s.dryRun, "dry-run", false, "resolve and validate message mutations without dispatching them")
+	cmd.PersistentFlags().BoolVar(&s.readOnly, "read-only", false, "reject Telegram mutations")
+	cmd.PersistentFlags().BoolVar(&s.dryRun, "dry-run", false, "resolve and validate supported mutations without dispatching them")
 	cmd.PersistentFlags().DurationVar(&s.wait, "wait", 0, "wait and retry flood limits within this total budget (max 5m)")
 	cmd.PersistentFlags().Lookup("wait").NoOptDefVal = tgapp.DefaultFloodWaitLimit.String()
 	cmd.PersistentFlags().DurationVar(&s.timeout, "timeout", 0, "total command timeout (0 selects a command-appropriate default; max 30m)")
@@ -215,6 +220,32 @@ func (s *appState) botManagerAPI() botapi.ManagerAPI {
 	}
 	client := botapi.NewClient(nil)
 	return client
+}
+
+func (s *appState) botTokenAPI() botapi.ManagedTokenAPI {
+	if s.managedTokenAPI != nil {
+		return s.managedTokenAPI
+	}
+	client := botapi.NewClient(nil)
+	return client
+}
+
+func (s *appState) botCreator() (botfactory.ManagedBotCreator, error) {
+	if s.managedBotCreator != nil {
+		return s.managedBotCreator, nil
+	}
+	app, err := s.telegramApp()
+	if err != nil {
+		return nil, err
+	}
+	return app, nil
+}
+
+func (s *appState) botsStore() botstore.Store {
+	if s.botInventory != nil {
+		return *s.botInventory
+	}
+	return botstore.New(mustPaths().Data, s.profileName())
 }
 
 func (s *appState) writer() output.Writer {

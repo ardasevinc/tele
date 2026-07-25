@@ -7,6 +7,7 @@ import (
 
 	"github.com/ardasevinc/tele/internal/botfactory"
 	"github.com/ardasevinc/tele/internal/output"
+	tgapp "github.com/ardasevinc/tele/internal/telegram"
 )
 
 func botsCommand(s *appState) *cobra.Command {
@@ -16,6 +17,67 @@ func botsCommand(s *appState) *cobra.Command {
 	}
 	cmd.AddCommand(botManagerCommand(s))
 	cmd.AddCommand(botUsernameCommand(s))
+	cmd.AddCommand(botCreateCommand(s))
+	return cmd
+}
+
+func botCreateCommand(s *appState) *cobra.Command {
+	var name string
+	cmd := &cobra.Command{
+		Use:   "create <username>",
+		Short: "Create a bot owned by the current user and managed by the configured manager",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := s.requireWritable("bots create"); err != nil {
+				return err
+			}
+			if s.dryRun {
+				return fmt.Errorf("--dry-run is not supported for bots create; use bots username check")
+			}
+			backend, supported := s.secretBackendInfo()
+			if !supported {
+				return fmt.Errorf("managed bot credentials require a supported secret store: %s", backend)
+			}
+			creator, err := s.botCreator()
+			if err != nil {
+				return err
+			}
+			inventory := s.botsStore()
+			result, err := botfactory.Create(
+				cmd.Context(),
+				s.secrets(),
+				s.botTokenAPI(),
+				creator,
+				inventory,
+				s.profileName(),
+				args[0],
+				name,
+				backend,
+			)
+			if err != nil {
+				return err
+			}
+			err = writeValue(s, result, func(w output.Writer) error {
+				return w.Print(fmt.Sprintf(
+					"[profile %s] created @%s; token stored in %s",
+					safeHuman(s.profileName()),
+					safeHuman(result.Bot.Username),
+					safeHuman(result.Token.SecretBackend),
+				))
+			})
+			if err != nil {
+				return tgapp.MutationError{
+					Outcome:              tgapp.MutationConfirmed,
+					RetrySafe:            false,
+					ReconciliationHandle: result.ReconciliationHandle,
+					Err:                  err,
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "display name for the new bot")
+	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
 

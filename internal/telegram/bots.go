@@ -37,7 +37,7 @@ type ManagedBotCreateOptions struct {
 
 type ManagedBot struct {
 	ID              int64  `json:"id"`
-	AccessHash      int64  `json:"access_hash,omitempty"`
+	AccessHash      int64  `json:"-"`
 	Username        string `json:"username"`
 	Name            string `json:"name"`
 	ManagerID       int64  `json:"manager_id"`

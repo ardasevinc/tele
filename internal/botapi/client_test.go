@@ -2,6 +2,7 @@ package botapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,6 +71,45 @@ func TestGetManagedBotToken(t *testing.T) {
 	}
 	if got != childToken {
 		t.Fatalf("token mismatch")
+	}
+}
+
+func TestReplaceManagedBotToken(t *testing.T) {
+	const managerToken = "123:manager-secret"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bot"+managerToken+"/replaceManagedBotToken" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("user_id"); got != "456" {
+			t.Fatalf("user_id = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"result":"456:replacement-secret"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.BaseURL = server.URL
+	got, err := client.ReplaceManagedBotToken(context.Background(), managerToken, 456)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "456:replacement-secret" {
+		t.Fatal("replacement token mismatch")
+	}
+}
+
+func TestManagedTokenClassifiesUnreadableSuccessAsAmbiguous(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`not-json`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.BaseURL = server.URL
+	_, err := client.ReplaceManagedBotToken(context.Background(), "123:secret", 456)
+	var ambiguous AmbiguousResultError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("error = %T, want AmbiguousResultError", err)
 	}
 }
 

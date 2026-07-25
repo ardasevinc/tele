@@ -29,7 +29,15 @@ type ManagerAPI interface {
 
 type ManagedTokenAPI interface {
 	GetManagedBotToken(context.Context, string, int64) (string, error)
+	ReplaceManagedBotToken(context.Context, string, int64) (string, error)
 }
+
+type AmbiguousResultError struct {
+	err error
+}
+
+func (e AmbiguousResultError) Error() string { return e.err.Error() }
+func (e AmbiguousResultError) Unwrap() error { return e.err }
 
 type Client struct {
 	HTTP    *http.Client
@@ -55,6 +63,19 @@ func (c Client) GetMe(ctx context.Context, token string) (Bot, error) {
 }
 
 func (c Client) GetManagedBotToken(ctx context.Context, managerToken string, botID int64) (string, error) {
+	return c.managedBotToken(ctx, managerToken, botID, "getManagedBotToken")
+}
+
+func (c Client) ReplaceManagedBotToken(ctx context.Context, managerToken string, botID int64) (string, error) {
+	return c.managedBotToken(ctx, managerToken, botID, "replaceManagedBotToken")
+}
+
+func (c Client) managedBotToken(
+	ctx context.Context,
+	managerToken string,
+	botID int64,
+	method string,
+) (string, error) {
 	if strings.TrimSpace(managerToken) == "" {
 		return "", errors.New("manager token is required")
 	}
@@ -63,7 +84,7 @@ func (c Client) GetManagedBotToken(ctx context.Context, managerToken string, bot
 	}
 	var token string
 	params := url.Values{"user_id": {fmt.Sprintf("%d", botID)}}
-	if err := c.call(ctx, managerToken, "getManagedBotToken", params, &token); err != nil {
+	if err := c.call(ctx, managerToken, method, params, &token); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(token) == "" {
@@ -101,16 +122,16 @@ func (c Client) call(ctx context.Context, token, method string, params url.Value
 	response, err := client.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return AmbiguousResultError{err: ctx.Err()}
 		}
-		return errors.New("telegram Bot API request failed")
+		return AmbiguousResultError{err: errors.New("telegram Bot API request failed")}
 	}
 	defer func() { _ = response.Body.Close() }()
 
 	decoder := json.NewDecoder(io.LimitReader(response.Body, maxResponse))
 	var envelope responseEnvelope
 	if err := decoder.Decode(&envelope); err != nil {
-		return errors.New("telegram Bot API returned an invalid response")
+		return AmbiguousResultError{err: errors.New("telegram Bot API returned an invalid response")}
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices || !envelope.OK {
 		description := strings.TrimSpace(strings.ReplaceAll(envelope.Description, token, "[redacted]"))
@@ -120,10 +141,10 @@ func (c Client) call(ctx context.Context, token, method string, params url.Value
 		return fmt.Errorf("telegram Bot API error %d: %s", envelope.ErrorCode, description)
 	}
 	if len(envelope.Result) == 0 || string(envelope.Result) == "null" {
-		return errors.New("telegram Bot API response is missing a result")
+		return AmbiguousResultError{err: errors.New("telegram Bot API response is missing a result")}
 	}
 	if err := json.Unmarshal(envelope.Result, result); err != nil {
-		return errors.New("telegram Bot API returned an invalid result")
+		return AmbiguousResultError{err: errors.New("telegram Bot API returned an invalid result")}
 	}
 	return nil
 }

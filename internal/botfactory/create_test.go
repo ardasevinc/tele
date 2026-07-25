@@ -43,6 +43,16 @@ func (f *fakeManagedTokenAPI) GetManagedBotToken(
 	return f.token, f.err
 }
 
+func (f *fakeManagedTokenAPI) ReplaceManagedBotToken(
+	_ context.Context,
+	managerToken string,
+	botID int64,
+) (string, error) {
+	f.managerToken = managerToken
+	f.botID = botID
+	return f.token, f.err
+}
+
 type fakeInventory struct {
 	bot    botstore.Bot
 	upsert int

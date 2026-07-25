@@ -162,6 +162,15 @@ func (a *botCommandTokenAPI) GetManagedBotToken(
 	return a.token, nil
 }
 
+func (a *botCommandTokenAPI) ReplaceManagedBotToken(
+	_ context.Context,
+	managerToken string,
+	_ int64,
+) (string, error) {
+	a.managerToken = managerToken
+	return a.token, nil
+}
+
 func TestBotsCreateEscrowsTokenWithoutEmittingIt(t *testing.T) {
 	const managerToken = "7:manager-secret"
 	const childToken = "42:child-secret"

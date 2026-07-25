@@ -7,6 +7,7 @@
   "tele auth status": {"profile":"main","authorized":true,"account":{"id":42,"username":"arda","first_name":"Arda"}},
   "tele bots manager configure": {"configured":true,"verified":true,"id":8947673763,"username":"GermanShepherdManagerBot","can_manage_bots":true,"token_stored":true,"secret_backend":"macOS Keychain"},
   "tele bots manager status": {"configured":true,"verified":true,"id":8947673763,"username":"GermanShepherdManagerBot","can_manage_bots":true,"token_stored":true,"secret_backend":"macOS Keychain"},
+  "tele bots username check": {"username":"disposable_agent_bot","available":true,"checked_at":"2026-07-25T12:00:00Z"},
   "tele chats": [{"ref":"user:10","kind":"user","id":10,"title":"Alice","unread_count":0}],
   "tele config get": {"default_limit":50,"default_profile":"main","profiles":{"main":{"api_id":12345}}},
   "tele config path": {"config":"/Users/arda/Library/Application Support/tele/config.toml"},

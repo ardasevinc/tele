@@ -15,6 +15,37 @@ func botsCommand(s *appState) *cobra.Command {
 		Short: "Create and manage Telegram bots",
 	}
 	cmd.AddCommand(botManagerCommand(s))
+	cmd.AddCommand(botUsernameCommand(s))
+	return cmd
+}
+
+func botUsernameCommand(s *appState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "username",
+		Short: "Check bot usernames",
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "check <username>",
+		Short: "Check whether a managed-bot username is available",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			app, err := s.telegramApp()
+			if err != nil {
+				return err
+			}
+			result, err := app.CheckBotUsername(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return writeValueWithMeta(s, result, s.telegramMeta(cmd.Context(), app, 0, "", nil), func(w output.Writer) error {
+				state := "unavailable"
+				if result.Available {
+					state = "available"
+				}
+				return w.Print(fmt.Sprintf("@%s is %s", safeHuman(result.Username), state))
+			})
+		},
+	})
 	return cmd
 }
 

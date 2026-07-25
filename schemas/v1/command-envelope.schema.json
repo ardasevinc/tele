@@ -113,6 +113,12 @@
             "meta": { "$ref": "#/$defs/bot-manager-command" },
             "data": { "$ref": "#/$defs/bot-manager-status" }
           }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/bot-username-command" },
+            "data": { "$ref": "#/$defs/bot-username-check" }
+          }
         }
       ]
     }
@@ -188,6 +194,9 @@
         { "$ref": "#/$defs/command-meta" },
         { "properties": { "command": { "enum": ["tele bots manager configure", "tele bots manager status"] } } }
       ]
+    },
+    "bot-username-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele bots username check" } } }]
     },
     "account": {
       "type": "object",
@@ -394,6 +403,16 @@
         "can_manage_bots": { "type": "boolean" },
         "token_stored": { "type": "boolean" },
         "secret_backend": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "bot-username-check": {
+      "type": "object",
+      "required": ["username", "available", "checked_at"],
+      "properties": {
+        "username": { "type": "string", "minLength": 5, "maxLength": 32 },
+        "available": { "type": "boolean" },
+        "checked_at": { "type": "string", "format": "date-time" }
       },
       "additionalProperties": false
     },

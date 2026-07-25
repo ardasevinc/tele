@@ -125,6 +125,24 @@
             "meta": { "$ref": "#/$defs/bot-create-command" },
             "data": { "$ref": "#/$defs/bot-creation-result" }
           }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/bot-list-command" },
+            "data": { "type": "array", "items": { "$ref": "#/$defs/managed-bot-status" } }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/bot-inspect-command" },
+            "data": { "$ref": "#/$defs/managed-bot-status" }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/bot-token-command" },
+            "data": { "$ref": "#/$defs/bot-token-operation-result" }
+          }
         }
       ]
     }
@@ -206,6 +224,18 @@
     },
     "bot-create-command": {
       "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele bots create" } } }]
+    },
+    "bot-list-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele bots list" } } }]
+    },
+    "bot-inspect-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele bots inspect" } } }]
+    },
+    "bot-token-command": {
+      "allOf": [
+        { "$ref": "#/$defs/command-meta" },
+        { "properties": { "command": { "enum": ["tele bots token rotate", "tele bots token sync"] } } }
+      ]
     },
     "account": {
       "type": "object",
@@ -450,6 +480,24 @@
       },
       "additionalProperties": false
     },
+    "bot-token-status": {
+      "type": "object",
+      "required": ["stored"],
+      "properties": {
+        "stored": { "type": "boolean" },
+        "secret_backend": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "managed-bot-status": {
+      "type": "object",
+      "required": ["bot", "token"],
+      "properties": {
+        "bot": { "$ref": "#/$defs/bot-receipt" },
+        "token": { "$ref": "#/$defs/bot-token-status" }
+      },
+      "additionalProperties": false
+    },
     "bot-creation-result": {
       "type": "object",
       "required": ["ok", "outcome", "retry_safe", "bot", "token", "reconciliation_handle", "timestamp"],
@@ -459,6 +507,21 @@
         "retry_safe": { "const": false },
         "bot": { "$ref": "#/$defs/bot-receipt" },
         "token": { "$ref": "#/$defs/bot-token-receipt" },
+        "reconciliation_handle": { "type": "string", "minLength": 1 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "bot-token-operation-result": {
+      "type": "object",
+      "required": ["ok", "action", "outcome", "retry_safe", "bot", "token", "reconciliation_handle", "timestamp"],
+      "properties": {
+        "ok": { "const": true },
+        "action": { "enum": ["rotate", "sync"] },
+        "outcome": { "const": "confirmed" },
+        "retry_safe": { "const": false },
+        "bot": { "$ref": "#/$defs/bot-receipt" },
+        "token": { "$ref": "#/$defs/bot-token-status" },
         "reconciliation_handle": { "type": "string", "minLength": 1 },
         "timestamp": { "type": "string", "format": "date-time" }
       },

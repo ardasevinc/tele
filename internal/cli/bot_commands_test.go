@@ -151,6 +151,8 @@ func (c *botCommandCreator) CreateManagedBot(
 type botCommandTokenAPI struct {
 	managerToken string
 	token        string
+	getCalls     int
+	replaceCalls int
 }
 
 func (a *botCommandTokenAPI) GetManagedBotToken(
@@ -159,6 +161,7 @@ func (a *botCommandTokenAPI) GetManagedBotToken(
 	_ int64,
 ) (string, error) {
 	a.managerToken = managerToken
+	a.getCalls++
 	return a.token, nil
 }
 
@@ -168,6 +171,7 @@ func (a *botCommandTokenAPI) ReplaceManagedBotToken(
 	_ int64,
 ) (string, error) {
 	a.managerToken = managerToken
+	a.replaceCalls++
 	return a.token, nil
 }
 
@@ -238,6 +242,87 @@ func TestBotsCreateRejectsSafetyModes(t *testing.T) {
 	for _, args := range [][]string{
 		{"--read-only", "bots", "create", "FactoryChildBot", "--name", "Factory Child"},
 		{"--dry-run", "bots", "create", "FactoryChildBot", "--name", "Factory Child"},
+	} {
+		state := &appState{in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{}}
+		if err := executeWithState(context.Background(), args, state); err == nil {
+			t.Fatalf("accepted args %v", args)
+		}
+	}
+}
+
+func TestBotInventoryAndTokenCommandsNeverEmitTokens(t *testing.T) {
+	const managerToken = "7:manager-secret"
+	const childToken = "42:child-secret"
+	var stdout, stderr bytes.Buffer
+	store := &botCommandStore{values: map[string][]byte{}}
+	if _, err := botfactory.ConfigureManager(
+		context.Background(),
+		store,
+		&botCommandAPI{bot: botapi.Bot{
+			ID: 7, IsBot: true, Username: "ManagerBot", CanManageBots: true,
+		}},
+		"default",
+		"ManagerBot",
+		managerToken,
+		"test keychain",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := botfactory.StoreManagedBotToken(
+		context.Background(),
+		store,
+		"default",
+		42,
+		childToken,
+	); err != nil {
+		t.Fatal(err)
+	}
+	inventory := botstore.New(t.TempDir(), "default")
+	if _, err := inventory.Upsert(context.Background(), botstore.Bot{
+		ID: 42, Username: "FactoryChildBot", Name: "Factory Child",
+		ManagerID: 7, ManagerUsername: "ManagerBot",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tokenAPI := &botCommandTokenAPI{token: "42:replacement-secret"}
+	state := &appState{
+		in:                      strings.NewReader(""),
+		out:                     &stdout,
+		err:                     &stderr,
+		secretStore:             store,
+		secretBackend:           "test keychain",
+		secretBackendSupported:  true,
+		secretBackendConfigured: true,
+		managedTokenAPI:         tokenAPI,
+		botInventory:            &inventory,
+	}
+	configPath := t.TempDir() + "/config.toml"
+	for _, args := range [][]string{
+		{"--json", "--config", configPath, "bots", "list"},
+		{"--json", "--config", configPath, "bots", "inspect", "@FactoryChildBot"},
+		{"--json", "--config", configPath, "bots", "token", "sync", "@FactoryChildBot"},
+		{"--json", "--config", configPath, "bots", "token", "rotate", "@FactoryChildBot", "--yes"},
+	} {
+		if err := executeWithState(context.Background(), args, state); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	output := stdout.String() + stderr.String()
+	for _, token := range []string{managerToken, childToken, tokenAPI.token} {
+		if strings.Contains(output, token) {
+			t.Fatalf("commands leaked a token: %s", output)
+		}
+	}
+	if tokenAPI.getCalls != 1 || tokenAPI.replaceCalls != 1 {
+		t.Fatalf("token calls: get=%d replace=%d", tokenAPI.getCalls, tokenAPI.replaceCalls)
+	}
+}
+
+func TestBotTokenRotateRequiresExplicitConfirmation(t *testing.T) {
+	for _, args := range [][]string{
+		{"bots", "token", "rotate", "FactoryChildBot"},
+		{"--read-only", "bots", "token", "rotate", "FactoryChildBot", "--yes"},
+		{"--dry-run", "bots", "token", "rotate", "FactoryChildBot", "--yes"},
 	} {
 		state := &appState{in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{}}
 		if err := executeWithState(context.Background(), args, state); err == nil {

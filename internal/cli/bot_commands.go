@@ -18,7 +18,192 @@ func botsCommand(s *appState) *cobra.Command {
 	cmd.AddCommand(botManagerCommand(s))
 	cmd.AddCommand(botUsernameCommand(s))
 	cmd.AddCommand(botCreateCommand(s))
+	cmd.AddCommand(botListCommand(s), botInspectCommand(s), botTokenCommand(s))
 	return cmd
+}
+
+func botListCommand(s *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List bots in the local managed-bot inventory",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			backend, supported := s.secretBackendInfo()
+			if !supported {
+				return fmt.Errorf("managed bot credentials require a supported secret store: %s", backend)
+			}
+			result, err := botfactory.List(
+				cmd.Context(),
+				s.botsStore(),
+				s.secrets(),
+				s.profileName(),
+				backend,
+			)
+			if err != nil {
+				return err
+			}
+			return writeValue(s, result, func(w output.Writer) error {
+				for _, status := range result {
+					tokenState := "token missing"
+					if status.Token.Stored {
+						tokenState = "token stored in " + status.Token.SecretBackend
+					}
+					if err := w.Print(fmt.Sprintf(
+						"@%s (%s) %s",
+						safeHuman(status.Bot.Username),
+						safeHuman(status.Bot.Ref),
+						safeHuman(tokenState),
+					)); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+		},
+	}
+}
+
+func botInspectCommand(s *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "inspect <bot>",
+		Short: "Inspect a bot in the local managed-bot inventory",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			backend, supported := s.secretBackendInfo()
+			if !supported {
+				return fmt.Errorf("managed bot credentials require a supported secret store: %s", backend)
+			}
+			result, err := botfactory.Inspect(
+				cmd.Context(),
+				s.botsStore(),
+				s.secrets(),
+				s.profileName(),
+				backend,
+				args[0],
+			)
+			if err != nil {
+				return err
+			}
+			return writeValue(s, result, func(w output.Writer) error {
+				tokenState := "missing"
+				if result.Token.Stored {
+					tokenState = "stored in " + result.Token.SecretBackend
+				}
+				return w.Print(fmt.Sprintf(
+					"@%s (%s); manager @%s; token %s",
+					safeHuman(result.Bot.Username),
+					safeHuman(result.Bot.Ref),
+					safeHuman(result.Bot.ManagerUsername),
+					safeHuman(tokenState),
+				))
+			})
+		},
+	}
+}
+
+func botTokenCommand(s *appState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "token",
+		Short: "Synchronize or rotate securely stored managed-bot tokens",
+	}
+	cmd.AddCommand(botTokenSyncCommand(s), botTokenRotateCommand(s))
+	return cmd
+}
+
+func botTokenSyncCommand(s *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "sync <bot>",
+		Short: "Retrieve the current bot token and securely replace the local copy",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if s.dryRun {
+				return fmt.Errorf("--dry-run is not supported for bots token sync")
+			}
+			backend, supported := s.secretBackendInfo()
+			if !supported {
+				return fmt.Errorf("managed bot credentials require a supported secret store: %s", backend)
+			}
+			inventory := s.botsStore()
+			result, err := botfactory.SyncToken(
+				cmd.Context(),
+				inventory,
+				s.secrets(),
+				s.botTokenAPI(),
+				s.profileName(),
+				backend,
+				args[0],
+			)
+			if err != nil {
+				return err
+			}
+			return writeBotTokenResult(s, result)
+		},
+	}
+}
+
+func botTokenRotateCommand(s *appState) *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "rotate <bot>",
+		Short: "Rotate the remote bot token and securely replace the local copy",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := s.requireWritable("bots token rotate"); err != nil {
+				return err
+			}
+			if s.dryRun {
+				return fmt.Errorf("--dry-run is not supported for bots token rotate")
+			}
+			if !yes {
+				return fmt.Errorf("bots token rotate requires --yes because the current token will stop working")
+			}
+			backend, supported := s.secretBackendInfo()
+			if !supported {
+				return fmt.Errorf("managed bot credentials require a supported secret store: %s", backend)
+			}
+			inventory := s.botsStore()
+			result, err := botfactory.RotateToken(
+				cmd.Context(),
+				inventory,
+				s.secrets(),
+				s.botTokenAPI(),
+				s.profileName(),
+				backend,
+				args[0],
+			)
+			if err != nil {
+				return err
+			}
+			return writeBotTokenResult(s, result)
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm destructive remote token rotation")
+	return cmd
+}
+
+func writeBotTokenResult(s *appState, result botfactory.TokenOperationResult) error {
+	verb := "synchronized"
+	if result.Action == "rotate" {
+		verb = "rotated"
+	}
+	err := writeValue(s, result, func(w output.Writer) error {
+		return w.Print(fmt.Sprintf(
+			"[profile %s] %s token for @%s; stored in %s",
+			safeHuman(s.profileName()),
+			verb,
+			safeHuman(result.Bot.Username),
+			safeHuman(result.Token.SecretBackend),
+		))
+	})
+	if err != nil {
+		return tgapp.MutationError{
+			Outcome:              tgapp.MutationConfirmed,
+			RetrySafe:            false,
+			ReconciliationHandle: result.ReconciliationHandle,
+			Err:                  err,
+		}
+	}
+	return nil
 }
 
 func botCreateCommand(s *appState) *cobra.Command {

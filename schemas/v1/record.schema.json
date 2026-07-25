@@ -37,7 +37,10 @@
         { "$ref": "command-envelope.schema.json#/$defs/doctor" },
         { "$ref": "command-envelope.schema.json#/$defs/bot-manager-status" },
         { "$ref": "command-envelope.schema.json#/$defs/bot-username-check" },
-        { "$ref": "command-envelope.schema.json#/$defs/bot-creation-result" }
+        { "$ref": "command-envelope.schema.json#/$defs/bot-creation-result" },
+        { "$ref": "command-envelope.schema.json#/$defs/managed-bot-status" },
+        { "type": "array", "items": { "$ref": "command-envelope.schema.json#/$defs/managed-bot-status" } },
+        { "$ref": "command-envelope.schema.json#/$defs/bot-token-operation-result" }
       ]
     }
   },

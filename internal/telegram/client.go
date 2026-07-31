@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -76,13 +77,7 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 			Store:   a.Secrets,
 			Path:    a.sessionPath(),
 		},
-		Device: telegram.DeviceConfig{
-			DeviceModel:    "tele",
-			SystemVersion:  "macOS",
-			AppVersion:     buildinfo.Version,
-			SystemLangCode: "en",
-			LangCode:       "en",
-		},
+		Device:      runtimeDeviceConfig(),
 		Middlewares: floodWaitMiddlewares(a.FloodWaitLimit),
 	})
 	called := false
@@ -93,6 +88,25 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 		return callbackErr
 	})
 	return clientRunError(runErr, callbackErr, called)
+}
+
+func runtimeDeviceConfig() telegram.DeviceConfig {
+	system := runtime.GOOS
+	switch runtime.GOOS {
+	case "darwin":
+		system = "macOS"
+	case "linux":
+		system = "Linux"
+	case "windows":
+		system = "Windows"
+	}
+	return telegram.DeviceConfig{
+		DeviceModel:    "tele",
+		SystemVersion:  system + "/" + runtime.GOARCH,
+		AppVersion:     buildinfo.Version,
+		SystemLangCode: "en",
+		LangCode:       "en",
+	}
 }
 
 func clientRunError(runErr, callbackErr error, called bool) error {

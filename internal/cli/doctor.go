@@ -29,12 +29,16 @@ func doctorCommand(s *appState) *cobra.Command {
 				paths.Config = s.cfgPath
 			}
 			backend, supported := s.secretBackendInfo()
+			backendID, backendInstance := s.secretBackendSelection()
 			report := doctor.Run(cmd.Context(), doctor.Options{
 				Paths:                  paths,
 				Profile:                s.profile,
 				Secrets:                s.secrets(),
 				SecretBackend:          backend,
+				SecretBackendID:        backendID,
+				SecretBackendInstance:  backendInstance,
 				SecretBackendSupported: supported,
+				SecretUnlockSource:     s.vaultUnlockSource(),
 				Version:                buildinfo.Version,
 				Commit:                 buildinfo.Commit,
 				Connect:                connect,

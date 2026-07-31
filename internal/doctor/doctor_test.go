@@ -108,6 +108,46 @@ func TestRunReportsReadyLocalStateWithoutLiveAccess(t *testing.T) {
 	}
 }
 
+func TestRunReportsPortableVaultMetadataWithoutSecretValues(t *testing.T) {
+	fx := validFixture(t)
+	const instance = "8e34c2c8-9c20-4cb4-ae66-e63ee0f3be50"
+	configBody := []byte("default_profile = \"main\"\n[profiles.main]\napi_id = 12345\n[profiles.main.secrets]\nbackend = \"vault-v1\"\ninstance = \"" + instance + "\"\n")
+	if err := os.WriteFile(fx.opts.Paths.Config, configBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	passphrase := []byte("doctor vault test passphrase")
+	vault, err := secrets.CreateVault(context.Background(), secrets.VaultPath(fx.opts.Paths.Data, "main", instance), "main", instance, passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vault.Close()
+	if err := vault.Set(context.Background(), "main", "api-hash", []byte("SUPERSECRET")); err != nil {
+		t.Fatal(err)
+	}
+	storage := session.EncryptedStorage{Profile: "main", Store: vault, Path: fx.sessionPath}
+	if err := storage.StoreSession(context.Background(), []byte("valid gotd session bytes")); err != nil {
+		t.Fatal(err)
+	}
+	fx.opts.Secrets = vault
+	fx.opts.SecretBackend = "portable vault"
+	fx.opts.SecretBackendID = secrets.BackendVault
+	fx.opts.SecretBackendInstance = instance
+	fx.opts.SecretUnlockSource = "file"
+	report := Run(context.Background(), fx.opts)
+	check := checkNamed(t, report, "vault")
+	if check.Status != Pass || check.Details["format"] != uint16(1) || check.Details["records"] != 2 {
+		t.Fatalf("vault check = %+v", check)
+	}
+	backend := checkNamed(t, report, "secret_store")
+	if backend.Details["backend_id"] != secrets.BackendVault || backend.Details["instance"] != instance || backend.Details["unlock_source"] != "file" {
+		t.Fatalf("secret_store details = %+v", backend.Details)
+	}
+	encoded, _ := json.Marshal(report)
+	if strings.Contains(string(encoded), "SUPERSECRET") || strings.Contains(string(encoded), "valid gotd session bytes") {
+		t.Fatalf("doctor leaked secret values: %s", encoded)
+	}
+}
+
 func TestRunAggregatesPartialConfigAndUnsupportedPlatform(t *testing.T) {
 	fx := validFixture(t)
 	if err := os.Remove(fx.opts.Paths.Config); err != nil {

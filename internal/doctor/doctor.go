@@ -48,7 +48,10 @@ type Options struct {
 	Profile                string
 	Secrets                secrets.Store
 	SecretBackend          string
+	SecretBackendID        secrets.BackendID
+	SecretBackendInstance  string
 	SecretBackendSupported bool
+	SecretUnlockSource     string
 	Version                string
 	Commit                 string
 	Connect                bool
@@ -105,13 +108,25 @@ func Run(ctx context.Context, opts Options) Report {
 		report.add("api_id", Pass, "API ID is configured", nil)
 	}
 
+	backendDetails := map[string]any{"backend": opts.SecretBackend}
+	if opts.SecretBackendID != "" {
+		backendDetails["backend_id"] = opts.SecretBackendID
+	}
+	if opts.SecretBackendInstance != "" {
+		backendDetails["instance"] = opts.SecretBackendInstance
+	}
+	if opts.SecretUnlockSource != "" {
+		backendDetails["unlock_source"] = opts.SecretUnlockSource
+	}
 	if opts.SecretBackendSupported {
-		report.add("secret_store", Pass, "secret store is supported", map[string]any{"backend": opts.SecretBackend})
+		report.add("secret_store", Pass, "secret store is supported", backendDetails)
 	} else {
-		report.add("secret_store", Fail, "secret store is unsupported", map[string]any{"backend": opts.SecretBackend})
+		report.add("secret_store", Fail, "secret store is unavailable", backendDetails)
 	}
 	apiHashReady := inspectSecret(ctx, opts, profileName, "api-hash", "api_hash", &report)
 	sessionKeyReady := inspectSecret(ctx, opts, profileName, session.EncryptionKey, "session_key", &report)
+	inspectVault(ctx, opts, &report)
+	inspectMigrationReceipts(opts.Paths.Data, profileName, &report)
 
 	sessionPath := filepath.Join(opts.Paths.Data, profileName, "session.enc")
 	sessionReady := inspectSessionFile(sessionPath, &report)
@@ -160,6 +175,53 @@ func Run(ctx context.Context, opts Options) Report {
 		}
 	}
 	return report
+}
+
+func inspectVault(ctx context.Context, opts Options, report *Report) {
+	if opts.SecretBackendID != secrets.BackendVault {
+		report.add("vault", Skipped, "active backend is not a portable vault", nil)
+		return
+	}
+	diagnoser, ok := opts.Secrets.(secrets.VaultDiagnoser)
+	if !ok {
+		report.add("vault", Fail, "vault diagnostics are unavailable", nil)
+		return
+	}
+	diagnostics, err := diagnoser.VaultDiagnostics(ctx)
+	if err != nil {
+		message := "vault could not be inspected"
+		if errors.Is(err, secrets.ErrVaultUnlockFailed) {
+			message = "vault could not be unlocked"
+		}
+		report.add("vault", Fail, message, nil)
+		return
+	}
+	report.add("vault", Pass, "vault format and payload are healthy", map[string]any{
+		"format": diagnostics.FormatVersion, "schema": diagnostics.PayloadSchema,
+		"generation": diagnostics.Generation, "records": diagnostics.Records,
+		"argon_memory_kib": diagnostics.ArgonMemoryKiB, "argon_iterations": diagnostics.ArgonIterations,
+		"argon_parallelism": diagnostics.ArgonParallelism,
+	})
+}
+
+func inspectMigrationReceipts(dataRoot, profile string, report *Report) {
+	dir := filepath.Join(dataRoot, profile, "secrets", "migrations")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		report.add("secret_migrations", Skipped, "no migration receipts", nil)
+		return
+	}
+	if err != nil {
+		report.add("secret_migrations", Fail, "migration receipts cannot be inspected", nil)
+		return
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.Type().IsRegular() && filepath.Ext(entry.Name()) == ".json" {
+			count++
+		}
+	}
+	report.add("secret_migrations", Pass, "migration receipts are present", map[string]any{"count": count})
 }
 
 func inspectConfig(path string, report *Report) (config.Config, bool) {

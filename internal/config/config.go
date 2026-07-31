@@ -25,8 +25,14 @@ type Config struct {
 }
 
 type Profile struct {
-	APIID int64  `toml:"api_id,omitempty"`
-	Phone string `toml:"phone,omitempty"`
+	APIID   int64          `toml:"api_id,omitempty"`
+	Phone   string         `toml:"phone,omitempty"`
+	Secrets *SecretBackend `toml:"secrets,omitempty"`
+}
+
+type SecretBackend struct {
+	Backend  string `toml:"backend,omitempty"`
+	Instance string `toml:"instance,omitempty"`
 }
 
 type Paths struct {

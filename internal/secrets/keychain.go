@@ -22,6 +22,10 @@ func Backend() (name string, supported bool) {
 	return "macOS Keychain", true
 }
 
+func (KeychainStore) BackendInfo() BackendInfo {
+	return BackendInfo{ID: BackendKeychainLegacy, Name: "macOS Keychain", Supported: true}
+}
+
 func (KeychainStore) Get(_ context.Context, profile string, key string) ([]byte, error) {
 	value, err := keyring.Get(service, account(profile, key))
 	if errors.Is(err, keyring.ErrNotFound) {

@@ -116,7 +116,7 @@ func Run(ctx context.Context, opts Options) Report {
 	sessionPath := filepath.Join(opts.Paths.Data, profileName, "session.enc")
 	sessionReady := inspectSessionFile(sessionPath, &report)
 	if sessionReady && sessionKeyReady {
-		storage := session.KeychainStorage{Profile: profileName, Store: opts.Secrets, Path: sessionPath}
+		storage := session.EncryptedStorage{Profile: profileName, Store: opts.Secrets, Path: sessionPath}
 		if plaintext, err := storage.InspectSession(ctx); err != nil {
 			report.add("session_decryption", Fail, "session cannot be decrypted", nil)
 		} else if len(plaintext) == 0 {

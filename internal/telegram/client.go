@@ -71,7 +71,7 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 		return fmt.Errorf("missing api_id for profile %q; run tele config set api-id <id>", a.Profile)
 	}
 	client := telegram.NewClient(int(profile.APIID), string(hash), telegram.Options{
-		SessionStorage: telesession.KeychainStorage{
+		SessionStorage: telesession.EncryptedStorage{
 			Profile: a.Profile,
 			Store:   a.Secrets,
 			Path:    a.sessionPath(),

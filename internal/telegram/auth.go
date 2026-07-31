@@ -71,7 +71,7 @@ func (a App) SetAPIHash(ctx context.Context, hash string) error {
 }
 
 func (a App) ResetLocalAuth(ctx context.Context) error {
-	sessionErr := telesession.KeychainStorage{Profile: a.Profile, Store: a.Secrets, Path: a.sessionPath()}.Delete(ctx)
+	sessionErr := telesession.EncryptedStorage{Profile: a.Profile, Store: a.Secrets, Path: a.sessionPath()}.Delete(ctx)
 	pendingErr := a.Secrets.Delete(ctx, a.Profile, authPendingKey)
 	return errors.Join(sessionErr, pendingErr)
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -116,6 +117,46 @@ func TestResolveProfileFallsBackToRootAPIID(t *testing.T) {
 	}
 	if profile.APIID != 123 {
 		t.Fatalf("APIID = %d, want 123", profile.APIID)
+	}
+}
+
+func TestSecretBackendConfigRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	want := Config{
+		DefaultProfile: "main",
+		Profiles: map[string]Profile{
+			"main": {
+				APIID: 123,
+				Secrets: &SecretBackend{
+					Backend:  "vault-v1",
+					Instance: "8e34c2c8-9c20-4cb4-ae66-e63ee0f3be50",
+				},
+			},
+		},
+	}
+	if err := Save(path, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *got.Profiles["main"].Secrets != *want.Profiles["main"].Secrets {
+		t.Fatalf("secrets = %+v, want %+v", got.Profiles["main"].Secrets, want.Profiles["main"].Secrets)
+	}
+}
+
+func TestSaveOmitsUnconfiguredSecretBackend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := Save(path, Config{Profiles: map[string]Profile{"main": {APIID: 123}}}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "secrets") {
+		t.Fatalf("unconfigured secret backend was serialized:\n%s", b)
 	}
 }
 

@@ -60,7 +60,7 @@ func validFixture(t *testing.T) fixture {
 	}
 	store := &memoryStore{values: map[string][]byte{"main:api-hash": []byte("SUPERSECRET")}}
 	sessionPath := filepath.Join(paths.Data, "main", "session.enc")
-	storage := session.KeychainStorage{Profile: "main", Store: store, Path: sessionPath}
+	storage := session.EncryptedStorage{Profile: "main", Store: store, Path: sessionPath}
 	if err := storage.StoreSession(context.Background(), []byte("valid gotd session bytes")); err != nil {
 		t.Fatal(err)
 	}

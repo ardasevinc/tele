@@ -20,13 +20,13 @@ const (
 	EncryptionKey = "mtproto-session-key"
 )
 
-type KeychainStorage struct {
+type EncryptedStorage struct {
 	Profile string
 	Store   secrets.Store
 	Path    string
 }
 
-func (s KeychainStorage) LoadSession(ctx context.Context) ([]byte, error) {
+func (s EncryptedStorage) LoadSession(ctx context.Context) ([]byte, error) {
 	if s.Path == "" {
 		return nil, fmt.Errorf("session storage path is required")
 	}
@@ -41,7 +41,7 @@ func (s KeychainStorage) LoadSession(ctx context.Context) ([]byte, error) {
 
 // InspectSession reads and decrypts session state without repairing permissions,
 // acquiring a mutation lock, or creating missing key material.
-func (s KeychainStorage) InspectSession(ctx context.Context) ([]byte, error) {
+func (s EncryptedStorage) InspectSession(ctx context.Context) ([]byte, error) {
 	ciphertext, err := os.ReadFile(s.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, gotdsession.ErrNotFound
@@ -59,7 +59,7 @@ func (s KeychainStorage) InspectSession(ctx context.Context) ([]byte, error) {
 	return decrypt(key, ciphertext)
 }
 
-func (s KeychainStorage) loadSession(ctx context.Context) ([]byte, error) {
+func (s EncryptedStorage) loadSession(ctx context.Context) ([]byte, error) {
 	if err := privatefs.RepairFile(s.Path); err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (s KeychainStorage) loadSession(ctx context.Context) ([]byte, error) {
 	return decrypt(key, ciphertext)
 }
 
-func (s KeychainStorage) StoreSession(ctx context.Context, data []byte) error {
+func (s EncryptedStorage) StoreSession(ctx context.Context, data []byte) error {
 	if s.Path == "" {
 		return fmt.Errorf("session storage path is required")
 	}
@@ -89,7 +89,7 @@ func (s KeychainStorage) StoreSession(ctx context.Context, data []byte) error {
 	})
 }
 
-func (s KeychainStorage) storeSession(ctx context.Context, data []byte) error {
+func (s EncryptedStorage) storeSession(ctx context.Context, data []byte) error {
 	key, err := s.key(ctx, true)
 	if err != nil {
 		return err
@@ -101,7 +101,7 @@ func (s KeychainStorage) storeSession(ctx context.Context, data []byte) error {
 	return privatefs.AtomicWriteFile(s.Path, ciphertext)
 }
 
-func (s KeychainStorage) Delete(ctx context.Context) error {
+func (s EncryptedStorage) Delete(ctx context.Context) error {
 	if s.Path == "" {
 		return s.delete(ctx)
 	}
@@ -110,7 +110,7 @@ func (s KeychainStorage) Delete(ctx context.Context) error {
 	})
 }
 
-func (s KeychainStorage) delete(ctx context.Context) error {
+func (s EncryptedStorage) delete(ctx context.Context) error {
 	var errs []error
 	if s.Path != "" {
 		if err := os.Remove(s.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -126,7 +126,7 @@ func (s KeychainStorage) delete(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (s KeychainStorage) key(ctx context.Context, create bool) ([]byte, error) {
+func (s EncryptedStorage) key(ctx context.Context, create bool) ([]byte, error) {
 	encoded, err := s.Store.Get(ctx, s.Profile, EncryptionKey)
 	if errors.Is(err, secrets.ErrNotFound) && create {
 		key := make([]byte, 32)

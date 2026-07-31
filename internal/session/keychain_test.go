@@ -22,7 +22,7 @@ func (missingStore) Get(context.Context, string, string) ([]byte, error) {
 
 func TestConcurrentFirstSessionWritesKeepKeyAndCiphertextConsistent(t *testing.T) {
 	store := memoryStore{values: map[string][]byte{}}
-	storage := KeychainStorage{Profile: "test", Store: store, Path: filepath.Join(t.TempDir(), "session.enc")}
+	storage := EncryptedStorage{Profile: "test", Store: store, Path: filepath.Join(t.TempDir(), "session.enc")}
 	const workers = 20
 	var wg sync.WaitGroup
 	errs := make(chan error, workers)
@@ -58,7 +58,7 @@ func (missingStore) Delete(context.Context, string, string) error {
 }
 
 func TestLoadSessionMapsMissingSecretToGotdErrNotFound(t *testing.T) {
-	storage := KeychainStorage{Profile: "test", Store: missingStore{}, Path: t.TempDir() + "/missing.enc"}
+	storage := EncryptedStorage{Profile: "test", Store: missingStore{}, Path: t.TempDir() + "/missing.enc"}
 	_, err := storage.LoadSession(context.Background())
 	if !errors.Is(err, gotdsession.ErrNotFound) {
 		t.Fatalf("err = %v, want %v", err, gotdsession.ErrNotFound)
@@ -87,7 +87,7 @@ func (s *trackingDeleteStore) Delete(_ context.Context, _ string, key string) er
 
 func TestDeleteAttemptsEverySecretAfterFailure(t *testing.T) {
 	store := &trackingDeleteStore{}
-	storage := KeychainStorage{Profile: "test", Store: store, Path: filepath.Join(t.TempDir(), "missing.enc")}
+	storage := EncryptedStorage{Profile: "test", Store: store, Path: filepath.Join(t.TempDir(), "missing.enc")}
 	if err := storage.Delete(context.Background()); err == nil || !strings.Contains(err.Error(), "keychain unavailable") {
 		t.Fatalf("Delete error = %v", err)
 	}
@@ -117,7 +117,7 @@ func (m memoryStore) Delete(_ context.Context, _ string, key string) error {
 func TestSessionRoundTripUsesEncryptedFileAndKeyStore(t *testing.T) {
 	store := memoryStore{values: map[string][]byte{}}
 	path := t.TempDir() + "/session.enc"
-	storage := KeychainStorage{Profile: "test", Store: store, Path: path}
+	storage := EncryptedStorage{Profile: "test", Store: store, Path: path}
 	want := []byte("binary\x00session\xffdata")
 	if err := storage.StoreSession(context.Background(), want); err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestLoadSessionRepairsExistingModes(t *testing.T) {
 	store := memoryStore{values: map[string][]byte{}}
 	dir := filepath.Join(t.TempDir(), "test")
 	path := filepath.Join(dir, "session.enc")
-	storage := KeychainStorage{Profile: "test", Store: store, Path: path}
+	storage := EncryptedStorage{Profile: "test", Store: store, Path: path}
 	if err := storage.StoreSession(context.Background(), []byte("session")); err != nil {
 		t.Fatal(err)
 	}

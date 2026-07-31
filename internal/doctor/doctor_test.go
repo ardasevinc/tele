@@ -46,7 +46,10 @@ type fixture struct {
 
 func validFixture(t *testing.T) fixture {
 	t.Helper()
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	paths := config.Paths{
 		Config: filepath.Join(root, "config", "config.toml"),
 		Data:   filepath.Join(root, "data"),

@@ -224,6 +224,25 @@ func TestVaultConcurrentWritersPreserveAllRecords(t *testing.T) {
 	}
 }
 
+func TestVaultStoreUsesProfileWideLockReentrantly(t *testing.T) {
+	path, passphrase := createTestVault(t)
+	store, err := OpenVault(path, "main", testVaultInstance, passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	lockPath := filepath.Join(filepath.Dir(path), "profile.lock")
+	if err := withProfileLockPath(context.Background(), lockPath, func(ctx context.Context) error {
+		if err := store.Set(ctx, "main", "key", []byte("value")); err != nil {
+			return err
+		}
+		_, err := store.Snapshot(ctx)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRejectDuplicateJSONKeys(t *testing.T) {
 	if err := rejectDuplicateJSONKeys([]byte(`{"schema":1,"schema":1}`)); err == nil {
 		t.Fatal("duplicate key accepted")

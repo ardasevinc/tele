@@ -31,10 +31,7 @@ func secretsCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if secrets.BackendID(backend) != secrets.BackendVault {
-				return fmt.Errorf("backend must be %s in this build", secrets.BackendVault)
-			}
-			result, err := s.initVault(cmd.Context())
+			result, err := s.initSecrets(cmd.Context(), secrets.BackendID(backend))
 			if err != nil {
 				return err
 			}
@@ -68,12 +65,13 @@ func secretsCommand(s *appState) *cobra.Command {
 	_ = migrateCommand.MarkFlagRequired("to")
 	cmd.AddCommand(migrateCommand)
 	var confirmInstance string
+	var purgeBackend string
 	purgeCommand := &cobra.Command{
-		Use:   "purge <instance>",
-		Short: "Preview or purge a retained inactive vault instance",
+		Use:   "purge --backend <backend> <instance>",
+		Short: "Preview or purge a retained inactive secret backend instance",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			result, err := s.purgeVault(cmd.Context(), args[0], confirmInstance)
+			result, err := s.purgeSecrets(cmd.Context(), secrets.BackendID(purgeBackend), args[0], confirmInstance)
 			if err != nil {
 				return err
 			}
@@ -82,13 +80,37 @@ func secretsCommand(s *appState) *cobra.Command {
 				if result.Purged {
 					action = "purged"
 				}
-				return w.Print(fmt.Sprintf("%s inactive vault %s", action, safeHuman(result.Instance)))
+				return w.Print(fmt.Sprintf("%s inactive %s instance %s", action, safeHuman(string(result.Backend)), safeHuman(result.Instance)))
 			})
 		},
 	}
+	purgeCommand.Flags().StringVar(&purgeBackend, "backend", "", "secret backend ID")
+	_ = purgeCommand.MarkFlagRequired("backend")
 	purgeCommand.Flags().StringVar(&confirmInstance, "confirm-instance", "", "delete only when this exactly matches the instance UUID")
 	cmd.AddCommand(purgeCommand)
 	return cmd
+}
+
+func (s *appState) purgeSecrets(ctx context.Context, backend secrets.BackendID, instance, confirmation string) (purgeResult, error) {
+	switch backend {
+	case secrets.BackendVault:
+		return s.purgeVault(ctx, instance, confirmation)
+	case secrets.BackendSecretService:
+		return s.purgeSecretService(ctx, instance, confirmation)
+	default:
+		return purgeResult{}, fmt.Errorf("backend must be %s or %s in this build", secrets.BackendVault, secrets.BackendSecretService)
+	}
+}
+
+func (s *appState) initSecrets(ctx context.Context, backend secrets.BackendID) (secretInitResult, error) {
+	switch backend {
+	case secrets.BackendVault:
+		return s.initVault(ctx)
+	case secrets.BackendSecretService:
+		return s.initSecretService(ctx)
+	default:
+		return secretInitResult{}, fmt.Errorf("backend must be %s or %s in this build", secrets.BackendVault, secrets.BackendSecretService)
+	}
 }
 
 type secretInitResult struct {
@@ -143,9 +165,8 @@ func (s *appState) initVault(ctx context.Context) (secretInitResult, error) {
 	}
 	paths := mustPaths()
 	vaultPath := secrets.VaultPath(paths.Data, profileName, instance)
-	lockPath := filepath.Join(paths.Data, profileName, "secrets", "profile.lock")
 	result := secretInitResult{Backend: secrets.BackendVault, Instance: instance, Profile: profileName}
-	err = privatefs.WithLock(ctx, lockPath, func() error {
+	err = secrets.WithProfileLock(ctx, paths.Data, profileName, func(ctx context.Context) error {
 		latest, err := s.loadConfig()
 		if err != nil {
 			return err
@@ -181,9 +202,63 @@ func (s *appState) initVault(ctx context.Context) (secretInitResult, error) {
 	return result, err
 }
 
+func (s *appState) initSecretService(ctx context.Context) (secretInitResult, error) {
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return secretInitResult{}, err
+	}
+	profileName, profile, err := cfg.ResolveProfile(s.profile)
+	if err != nil {
+		return secretInitResult{}, err
+	}
+	if profile.Secrets != nil {
+		return secretInitResult{}, fmt.Errorf("profile %q already selects secret backend %q", profileName, profile.Secrets.Backend)
+	}
+	instance, err := secrets.NewVaultInstance()
+	if err != nil {
+		return secretInitResult{}, err
+	}
+	paths := mustPaths()
+	result := secretInitResult{Backend: secrets.BackendSecretService, Instance: instance, Profile: profileName}
+	err = secrets.WithProfileLock(ctx, paths.Data, profileName, func(ctx context.Context) error {
+		latest, err := s.loadConfig()
+		if err != nil {
+			return err
+		}
+		_, latestProfile, err := latest.ResolveProfile(profileName)
+		if err != nil {
+			return err
+		}
+		if latestProfile.Secrets != nil {
+			return fmt.Errorf("profile %q already selects secret backend %q", profileName, latestProfile.Secrets.Backend)
+		}
+		store, err := secrets.InitSecretService(ctx, paths.Data, profileName, instance)
+		if err != nil {
+			return err
+		}
+		store.Close()
+		return config.Update(ctx, s.cfgPath, func(current *config.Config) error {
+			_, currentProfile, err := current.ResolveProfile(profileName)
+			if err != nil {
+				return err
+			}
+			if currentProfile.Secrets != nil {
+				return fmt.Errorf("profile %q selected another secret backend during initialization", profileName)
+			}
+			if _, err := current.EnsureProfile(profileName); err != nil {
+				return err
+			}
+			currentProfile.Secrets = &config.SecretBackend{Backend: string(secrets.BackendSecretService), Instance: instance}
+			current.Profiles[profileName] = currentProfile
+			return nil
+		})
+	})
+	return result, err
+}
+
 func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.BackendID) (migrationReceipt, error) {
-	if targetBackend != secrets.BackendVault {
-		return migrationReceipt{}, fmt.Errorf("target backend must be %s in this build", secrets.BackendVault)
+	if targetBackend != secrets.BackendVault && targetBackend != secrets.BackendSecretService {
+		return migrationReceipt{}, fmt.Errorf("target backend must be %s or %s in this build", secrets.BackendVault, secrets.BackendSecretService)
 	}
 	cfg, err := s.loadConfig()
 	if err != nil {
@@ -196,15 +271,18 @@ func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.Bac
 	if profile.Secrets == nil {
 		return migrationReceipt{}, &secrets.BackendError{Kind: secrets.ErrBackendUnconfigured, Detail: "migration source is not selected"}
 	}
-	passphrase, err := s.readVaultPassphrase(false)
-	if err != nil {
-		return migrationReceipt{}, err
+	var passphrase []byte
+	sourceBackend := secrets.BackendID(profile.Secrets.Backend)
+	if sourceBackend == secrets.BackendVault || targetBackend == secrets.BackendVault {
+		passphrase, err = s.readVaultPassphrase(false)
+		if err != nil {
+			return migrationReceipt{}, err
+		}
+		defer zeroSecret(passphrase)
 	}
-	defer zeroSecret(passphrase)
 	paths := mustPaths()
-	lockPath := filepath.Join(paths.Data, profileName, "secrets", "profile.lock")
 	var receipt migrationReceipt
-	err = privatefs.WithLock(ctx, lockPath, func() error {
+	err = secrets.WithProfileLock(ctx, paths.Data, profileName, func(ctx context.Context) error {
 		latest, err := s.loadConfig()
 		if err != nil {
 			return err
@@ -217,7 +295,7 @@ func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.Bac
 			return &secrets.BackendError{Kind: secrets.ErrMigrationIncomplete, Detail: "source selector changed before migration"}
 		}
 		sourceSelection := secrets.Selection{Backend: secrets.BackendID(profile.Secrets.Backend), Instance: profile.Secrets.Instance}
-		source, err := secrets.Open(sourceSelection, secrets.OpenOptions{DataRoot: paths.Data, Profile: profileName, Passphrase: passphrase})
+		source, err := secrets.Open(ctx, sourceSelection, secrets.OpenOptions{DataRoot: paths.Data, Profile: profileName, Passphrase: passphrase})
 		if err != nil {
 			return err
 		}
@@ -235,11 +313,11 @@ func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.Bac
 		if err != nil {
 			return err
 		}
-		target, err := secrets.CreateVault(ctx, secrets.VaultPath(paths.Data, profileName, targetInstance), profileName, targetInstance, passphrase)
+		target, err := createMigrationTarget(ctx, targetBackend, paths.Data, profileName, targetInstance, passphrase)
 		if err != nil {
 			return err
 		}
-		defer target.Close()
+		defer closeSecretStore(target)
 		keys := make([]string, 0, len(snapshot))
 		for key := range snapshot {
 			keys = append(keys, key)
@@ -288,6 +366,17 @@ func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.Bac
 	return receipt, err
 }
 
+func createMigrationTarget(ctx context.Context, backend secrets.BackendID, dataRoot, profile, instance string, passphrase []byte) (secrets.Store, error) {
+	switch backend {
+	case secrets.BackendVault:
+		return secrets.CreateVault(ctx, secrets.VaultPath(dataRoot, profile, instance), profile, instance, passphrase)
+	case secrets.BackendSecretService:
+		return secrets.InitSecretService(ctx, dataRoot, profile, instance)
+	default:
+		return nil, &secrets.BackendError{Kind: secrets.ErrBackendUnavailable, Backend: backend}
+	}
+}
+
 func (s *appState) purgeVault(ctx context.Context, instance, confirmation string) (purgeResult, error) {
 	if err := secrets.ValidateVaultInstance(instance); err != nil {
 		return purgeResult{}, err
@@ -316,8 +405,7 @@ func (s *appState) purgeVault(ctx context.Context, instance, confirmation string
 	if confirmation != instance {
 		return result, fmt.Errorf("--confirm-instance must exactly match %q", instance)
 	}
-	lockPath := filepath.Join(paths.Data, profileName, "secrets", "profile.lock")
-	err = privatefs.WithLock(ctx, lockPath, func() error {
+	err = secrets.WithProfileLock(ctx, paths.Data, profileName, func(ctx context.Context) error {
 		latest, err := s.loadConfig()
 		if err != nil {
 			return err
@@ -330,6 +418,58 @@ func (s *appState) purgeVault(ctx context.Context, instance, confirmation string
 			return fmt.Errorf("refusing to purge active vault instance %q", instance)
 		}
 		return secrets.PurgeVault(ctx, path, instance)
+	})
+	if err != nil {
+		return result, err
+	}
+	result.Purged = true
+	return result, nil
+}
+
+func (s *appState) purgeSecretService(ctx context.Context, instance, confirmation string) (purgeResult, error) {
+	if err := secrets.ValidateVaultInstance(instance); err != nil {
+		return purgeResult{}, err
+	}
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return purgeResult{}, err
+	}
+	profileName, profile, err := cfg.ResolveProfile(s.profile)
+	if err != nil {
+		return purgeResult{}, err
+	}
+	paths := mustPaths()
+	result := purgeResult{
+		Profile: profileName, Backend: secrets.BackendSecretService, Instance: instance,
+		Path: "secret-service://" + profileName + "/" + instance,
+	}
+	if profile.Secrets != nil && profile.Secrets.Backend == string(secrets.BackendSecretService) && profile.Secrets.Instance == instance {
+		result.Active = true
+		return result, fmt.Errorf("refusing to purge active Secret Service instance %q", instance)
+	}
+	if err := secrets.InspectSecretService(ctx, paths.Data, profileName, instance); err != nil {
+		return result, err
+	}
+	if confirmation == "" {
+		return result, nil
+	}
+	if confirmation != instance {
+		return result, fmt.Errorf("--confirm-instance must exactly match %q", instance)
+	}
+	err = secrets.WithProfileLock(ctx, paths.Data, profileName, func(ctx context.Context) error {
+		latest, err := s.loadConfig()
+		if err != nil {
+			return err
+		}
+		_, latestProfile, err := latest.ResolveProfile(profileName)
+		if err != nil {
+			return err
+		}
+		if latestProfile.Secrets != nil && latestProfile.Secrets.Backend == string(secrets.BackendSecretService) && latestProfile.Secrets.Instance == instance {
+			return fmt.Errorf("refusing to purge active Secret Service instance %q", instance)
+		}
+		_, err = secrets.PurgeSecretService(ctx, paths.Data, profileName, instance)
+		return err
 	})
 	if err != nil {
 		return result, err
@@ -379,7 +519,7 @@ func readVaultPassphraseTTY(confirm bool) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vault passphrase source required: no controlling TTY: %w", err)
 	}
-	defer tty.Close()
+	defer func() { _ = tty.Close() }()
 	if !term.IsTerminal(int(tty.Fd())) {
 		return nil, fmt.Errorf("vault passphrase source required: controlling TTY is unavailable")
 	}

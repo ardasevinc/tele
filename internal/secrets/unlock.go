@@ -44,7 +44,7 @@ func ReadPassphraseFD(fd int) ([]byte, error) {
 }
 
 func readPassphrase(reader io.ReadCloser) ([]byte, error) {
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	value, err := io.ReadAll(io.LimitReader(reader, MaxPassphraseSize+1))
 	if err != nil {
 		zeroBytes(value)

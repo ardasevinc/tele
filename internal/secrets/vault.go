@@ -118,22 +118,25 @@ func CreateVault(ctx context.Context, path, profile, instance string, passphrase
 		return nil, fmt.Errorf("generate vault master key: %w", err)
 	}
 	created := false
-	err = privatefs.WithLock(ctx, path+".lock", func() error {
-		if _, err := os.Lstat(path); err == nil {
-			return fmt.Errorf("vault already exists: %s", path)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		encoded, err := createVaultBytes(profile, instance, instanceID, passphrase, store.masterKey[:])
-		if err != nil {
-			return err
-		}
-		defer zeroBytes(encoded)
-		if err := privatefs.AtomicWriteFile(path, encoded); err != nil {
-			return err
-		}
-		created = true
-		return nil
+	profileLock := filepath.Join(filepath.Dir(path), "profile.lock")
+	err = withProfileLockPath(ctx, profileLock, func(ctx context.Context) error {
+		return privatefs.WithLock(ctx, path+".lock", func() error {
+			if _, err := os.Lstat(path); err == nil {
+				return fmt.Errorf("vault already exists: %s", path)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			encoded, err := createVaultBytes(profile, instance, instanceID, passphrase, store.masterKey[:])
+			if err != nil {
+				return err
+			}
+			defer zeroBytes(encoded)
+			if err := privatefs.AtomicWriteFile(path, encoded); err != nil {
+				return err
+			}
+			created = true
+			return nil
+		})
 	})
 	if err != nil {
 		zeroBytes(store.masterKey[:])
@@ -204,7 +207,7 @@ func (s *VaultStore) Get(ctx context.Context, profile, key string) ([]byte, erro
 		return nil, err
 	}
 	var value []byte
-	err := privatefs.WithLock(ctx, s.path+".lock", func() error {
+	err := s.withLock(ctx, func(context.Context) error {
 		data, payload, err := s.readCurrent()
 		if err != nil {
 			return err
@@ -224,7 +227,7 @@ func (s *VaultStore) Set(ctx context.Context, profile, key string, value []byte)
 	if err := s.validateAccess(profile, key, value); err != nil {
 		return err
 	}
-	return privatefs.WithLock(ctx, s.path+".lock", func() error {
+	return s.withLock(ctx, func(context.Context) error {
 		data, payload, err := s.readCurrent()
 		if err != nil {
 			return err
@@ -242,7 +245,7 @@ func (s *VaultStore) Delete(ctx context.Context, profile, key string) error {
 	if err := s.validateAccess(profile, key, nil); err != nil {
 		return err
 	}
-	return privatefs.WithLock(ctx, s.path+".lock", func() error {
+	return s.withLock(ctx, func(context.Context) error {
 		data, payload, err := s.readCurrent()
 		if err != nil {
 			return err
@@ -258,7 +261,7 @@ func (s *VaultStore) Delete(ctx context.Context, profile, key string) error {
 
 func (s *VaultStore) Snapshot(ctx context.Context) (map[string][]byte, error) {
 	var snapshot map[string][]byte
-	err := privatefs.WithLock(ctx, s.path+".lock", func() error {
+	err := s.withLock(ctx, func(context.Context) error {
 		data, payload, err := s.readCurrent()
 		if err != nil {
 			return err
@@ -272,7 +275,7 @@ func (s *VaultStore) Snapshot(ctx context.Context) (map[string][]byte, error) {
 
 func (s *VaultStore) VaultDiagnostics(ctx context.Context) (VaultDiagnostics, error) {
 	var diagnostics VaultDiagnostics
-	err := privatefs.WithLock(ctx, s.path+".lock", func() error {
+	err := s.withLock(ctx, func(context.Context) error {
 		data, payload, err := s.readCurrent()
 		if err != nil {
 			return err
@@ -307,6 +310,13 @@ func (s *VaultStore) validateAccess(profile, key string, value []byte) error {
 		return fmt.Errorf("vault value exceeds %d bytes", vaultMaxValueSize)
 	}
 	return nil
+}
+
+func (s *VaultStore) withLock(ctx context.Context, fn func(context.Context) error) error {
+	profileLock := filepath.Join(filepath.Dir(s.path), "profile.lock")
+	return withProfileLockPath(ctx, profileLock, func(ctx context.Context) error {
+		return privatefs.WithLock(ctx, s.path+".lock", func() error { return fn(ctx) })
+	})
 }
 
 func (s *VaultStore) readCurrent() ([]byte, vaultPayload, error) {
@@ -410,6 +420,7 @@ func encodeVaultPayload(prefix []byte, payload vaultPayload, masterKey []byte) (
 	if _, err := rand.Read(encoded[140:164]); err != nil {
 		return nil, err
 	}
+	// #nosec G115 -- ciphertextLen is bounded above by vaultMaxSize immediately above.
 	binary.BigEndian.PutUint32(encoded[164:168], uint32(ciphertextLen))
 	aad := payloadAAD(encoded)
 	encoded = payloadCipher.Seal(encoded, encoded[140:164], plaintext, aad)
@@ -569,7 +580,7 @@ func readVaultFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	openedInfo, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -644,18 +655,21 @@ func InspectVaultInstance(path, instance string) error {
 }
 
 func PurgeVault(ctx context.Context, path, instance string) error {
-	return privatefs.WithLock(ctx, path+".lock", func() error {
-		if err := InspectVaultInstance(path, instance); err != nil {
-			return err
-		}
-		if err := os.Remove(path); err != nil {
-			return err
-		}
-		dir, err := os.Open(filepath.Dir(path))
-		if err != nil {
-			return err
-		}
-		return errors.Join(dir.Sync(), dir.Close())
+	profileLock := filepath.Join(filepath.Dir(path), "profile.lock")
+	return withProfileLockPath(ctx, profileLock, func(ctx context.Context) error {
+		return privatefs.WithLock(ctx, path+".lock", func() error {
+			if err := InspectVaultInstance(path, instance); err != nil {
+				return err
+			}
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+			dir, err := os.Open(filepath.Dir(path))
+			if err != nil {
+				return err
+			}
+			return errors.Join(dir.Sync(), dir.Close())
+		})
 	})
 }
 

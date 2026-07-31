@@ -13,5 +13,6 @@ func vaultOwnerAllowed(info fs.FileInfo) bool {
 	if !ok {
 		return false
 	}
-	return stat.Uid == 0 || stat.Uid == uint32(os.Geteuid())
+	effectiveUID := os.Geteuid()
+	return stat.Uid == 0 || (effectiveUID >= 0 && uint64(stat.Uid) == uint64(effectiveUID))
 }

@@ -88,6 +88,17 @@ type VaultDiagnoser interface {
 	VaultDiagnostics(context.Context) (VaultDiagnostics, error)
 }
 
+type CatalogDiagnostics struct {
+	Generation    uint64
+	Mappings      int
+	PhysicalItems int
+	Orphans       int
+}
+
+type CatalogDiagnoser interface {
+	CatalogDiagnostics(context.Context) (CatalogDiagnostics, error)
+}
+
 type Selection struct {
 	Backend  BackendID
 	Instance string
@@ -99,7 +110,7 @@ type OpenOptions struct {
 	Passphrase []byte
 }
 
-func Open(selection Selection, opts OpenOptions) (Store, error) {
+func Open(ctx context.Context, selection Selection, opts OpenOptions) (Store, error) {
 	if selection.Backend == "" {
 		if runtime.GOOS == "darwin" {
 			return openLegacyKeychain()
@@ -114,7 +125,12 @@ func Open(selection Selection, opts OpenOptions) (Store, error) {
 		return OpenVault(VaultPath(opts.DataRoot, opts.Profile, selection.Instance), opts.Profile, selection.Instance, opts.Passphrase)
 	case BackendKeychainLegacy:
 		return openLegacyKeychain()
-	case BackendKeychain, BackendSecretService:
+	case BackendSecretService:
+		if selection.Instance == "" {
+			return nil, &BackendError{Kind: ErrBackendUnconfigured, Backend: BackendSecretService, Detail: "missing instance UUID"}
+		}
+		return OpenSecretService(ctx, opts.DataRoot, opts.Profile, selection.Instance)
+	case BackendKeychain:
 		return nil, &BackendError{Kind: ErrBackendUnavailable, Backend: selection.Backend, Detail: "backend is not implemented in this build"}
 	default:
 		return nil, &BackendError{Kind: ErrBackendUnavailable, Backend: selection.Backend, Detail: "unknown backend ID"}

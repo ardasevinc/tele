@@ -126,6 +126,7 @@ func Run(ctx context.Context, opts Options) Report {
 	apiHashReady := inspectSecret(ctx, opts, profileName, "api-hash", "api_hash", &report)
 	sessionKeyReady := inspectSecret(ctx, opts, profileName, session.EncryptionKey, "session_key", &report)
 	inspectVault(ctx, opts, &report)
+	inspectSecretCatalog(ctx, opts, &report)
 	inspectMigrationReceipts(opts.Paths.Data, profileName, &report)
 
 	sessionPath := filepath.Join(opts.Paths.Data, profileName, "session.enc")
@@ -175,6 +176,47 @@ func Run(ctx context.Context, opts Options) Report {
 		}
 	}
 	return report
+}
+
+func inspectSecretCatalog(ctx context.Context, opts Options, report *Report) {
+	if opts.SecretBackendID == secrets.BackendVault {
+		diagnoser, ok := opts.Secrets.(secrets.VaultDiagnoser)
+		if !ok {
+			report.add("secret_catalog", Fail, "vault catalog diagnostics are unavailable", nil)
+			return
+		}
+		diagnostics, err := diagnoser.VaultDiagnostics(ctx)
+		if err != nil {
+			report.add("secret_catalog", Fail, "vault catalog cannot be inspected", nil)
+			return
+		}
+		report.add("secret_catalog", Pass, "vault payload is authoritative", map[string]any{"generation": diagnostics.Generation, "mappings": diagnostics.Records, "orphans": 0})
+		return
+	}
+	if opts.SecretBackendID != secrets.BackendSecretService {
+		report.add("secret_catalog", Skipped, "active backend has no v1 catalog", nil)
+		return
+	}
+	diagnoser, ok := opts.Secrets.(secrets.CatalogDiagnoser)
+	if !ok {
+		report.add("secret_catalog", Fail, "native catalog diagnostics are unavailable", nil)
+		return
+	}
+	diagnostics, err := diagnoser.CatalogDiagnostics(ctx)
+	if err != nil {
+		report.add("secret_catalog", Fail, "native catalog cannot be inspected", nil)
+		return
+	}
+	status := Pass
+	message := "native catalog is authoritative"
+	if diagnostics.Orphans > 0 {
+		status = Warning
+		message = "native catalog is healthy with unreferenced physical items"
+	}
+	report.add("secret_catalog", status, message, map[string]any{
+		"generation": diagnostics.Generation, "mappings": diagnostics.Mappings,
+		"physical_items": diagnostics.PhysicalItems, "orphans": diagnostics.Orphans,
+	})
 }
 
 func inspectVault(ctx context.Context, opts Options, report *Report) {

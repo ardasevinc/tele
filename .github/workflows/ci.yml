@@ -31,6 +31,19 @@ jobs:
         env:
           GOPROXY: "off"
         run: go test -race ./...
+      - name: Test real Secret Service lifecycle
+        env:
+          GOPROXY: "off"
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends gnome-keyring
+          dbus-run-session -- bash -euo pipefail -c '
+            runtime_dir="$(mktemp -d)"
+            chmod 700 "$runtime_dir"
+            export XDG_RUNTIME_DIR="$runtime_dir"
+            eval "$(printf "tele-ci-keyring\n" | gnome-keyring-daemon --unlock --components=secrets)"
+            go test -tags=secretserviceintegration ./internal/secrets -run TestSecretServiceRealProviderLifecycle -count=1
+          '
       - name: Vet
         env:
           GOPROXY: "off"
@@ -95,4 +108,3 @@ jobs:
         run: gosec -quiet ./...
       - name: Govulncheck
         run: govulncheck ./...
-

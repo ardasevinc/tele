@@ -13,13 +13,13 @@ func TestOpenRequiresExplicitBackendOffDarwin(t *testing.T) {
 	if runtime.GOOS == "darwin" {
 		t.Skip("macOS intentionally preserves the legacy Keychain default")
 	}
-	if _, err := Open(Selection{}, OpenOptions{Profile: "main"}); !errors.Is(err, ErrBackendUnconfigured) {
+	if _, err := Open(context.Background(), Selection{}, OpenOptions{Profile: "main"}); !errors.Is(err, ErrBackendUnconfigured) {
 		t.Fatalf("Open error = %v, want ErrBackendUnconfigured", err)
 	}
 }
 
 func TestOpenRejectsUnknownBackend(t *testing.T) {
-	if _, err := Open(Selection{Backend: "future-v9"}, OpenOptions{Profile: "main"}); !errors.Is(err, ErrBackendUnavailable) {
+	if _, err := Open(context.Background(), Selection{Backend: "future-v9"}, OpenOptions{Profile: "main"}); !errors.Is(err, ErrBackendUnavailable) {
 		t.Fatalf("Open error = %v, want ErrBackendUnavailable", err)
 	}
 }

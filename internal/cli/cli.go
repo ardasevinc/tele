@@ -232,7 +232,7 @@ func (s *appState) secretBackendInfo() (string, bool) {
 		return secrets.Backend()
 	}
 	id := secrets.BackendID(profile.Secrets.Backend)
-	return secrets.BackendDisplayName(id), id == secrets.BackendVault || id == secrets.BackendKeychainLegacy
+	return secrets.BackendDisplayName(id), id == secrets.BackendVault || id == secrets.BackendKeychainLegacy || id == secrets.BackendSecretService
 }
 
 func (s *appState) secretBackendSelection() (secrets.BackendID, string) {
@@ -283,7 +283,7 @@ func (s *appState) openSecretStore(ctx context.Context) (secrets.Store, error) {
 		defer zeroSecret(passphrase)
 	}
 	paths := mustPaths()
-	return secrets.Open(selection, secrets.OpenOptions{DataRoot: paths.Data, Profile: profileName, Passphrase: passphrase})
+	return secrets.Open(ctx, selection, secrets.OpenOptions{DataRoot: paths.Data, Profile: profileName, Passphrase: passphrase})
 }
 
 func (s *appState) botManagerAPI() botapi.ManagerAPI {

@@ -15,7 +15,7 @@ import (
 const testVaultInstance = "8e34c2c8-9c20-4cb4-ae66-e63ee0f3be50"
 
 func TestVaultRoundTripAndSnapshot(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "main", "secrets", testVaultInstance+".vault")
+	path := filepath.Join(secureTempDir(t), "main", "secrets", testVaultInstance+".vault")
 	passphrase := []byte("correct horse battery staple")
 	created, err := CreateVault(context.Background(), path, "main", testVaultInstance, passphrase)
 	if err != nil {
@@ -145,7 +145,7 @@ func TestVaultRejectsFutureVersionWithoutMutation(t *testing.T) {
 
 func TestVaultCanBeRelocated(t *testing.T) {
 	path, passphrase := createTestVault(t)
-	destinationDir := t.TempDir()
+	destinationDir := secureTempDir(t)
 	if err := os.Chmod(destinationDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestVaultCanBeRelocated(t *testing.T) {
 
 func TestVaultRejectsSymlink(t *testing.T) {
 	path, passphrase := createTestVault(t)
-	link := filepath.Join(t.TempDir(), "vault-link")
+	link := filepath.Join(secureTempDir(t), "vault-link")
 	if err := os.Symlink(path, link); err != nil {
 		t.Fatal(err)
 	}
@@ -176,11 +176,11 @@ func TestVaultRejectsSymlink(t *testing.T) {
 }
 
 func TestVaultRejectsSymlinkedParent(t *testing.T) {
-	realDir := filepath.Join(t.TempDir(), "real")
+	realDir := filepath.Join(secureTempDir(t), "real")
 	if err := os.Mkdir(realDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	linkDir := filepath.Join(t.TempDir(), "linked")
+	linkDir := filepath.Join(secureTempDir(t), "linked")
 	if err := os.Symlink(realDir, linkDir); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestReadPassphraseFDClosesDescriptor(t *testing.T) {
 
 func createTestVault(t *testing.T) (string, []byte) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "vault", testVaultInstance+".vault")
+	path := filepath.Join(secureTempDir(t), "vault", testVaultInstance+".vault")
 	passphrase := []byte("portable vault test passphrase")
 	store, err := CreateVault(context.Background(), path, "main", testVaultInstance, passphrase)
 	if err != nil {
@@ -300,4 +300,16 @@ func createTestVault(t *testing.T) (string, []byte) {
 	}
 	store.Close()
 	return path, passphrase
+}
+
+func secureTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 
 	"github.com/pelletier/go-toml/v2"
 
@@ -45,13 +46,22 @@ func DefaultPaths() (Paths, error) {
 	if err != nil {
 		return Paths{}, err
 	}
-	data, err := os.UserHomeDir()
-	if err != nil {
-		return Paths{}, err
+	dataRoot := ""
+	if runtime.GOOS == "linux" {
+		if candidate := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(candidate) {
+			dataRoot = candidate
+		}
+	}
+	if dataRoot == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return Paths{}, err
+		}
+		dataRoot = filepath.Join(home, ".local", "share")
 	}
 	return Paths{
 		Config: filepath.Join(cfg, "tele", "config.toml"),
-		Data:   filepath.Join(data, ".local", "share", "tele"),
+		Data:   filepath.Join(dataRoot, "tele"),
 	}, nil
 }
 

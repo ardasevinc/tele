@@ -104,6 +104,12 @@
         },
         {
           "properties": {
+            "meta": { "$ref": "#/$defs/secrets-init-command" },
+            "data": { "$ref": "#/$defs/secrets-init" }
+          }
+        },
+        {
+          "properties": {
             "meta": { "$ref": "#/$defs/doctor-command" },
             "data": { "$ref": "#/$defs/doctor" }
           }
@@ -209,6 +215,9 @@
     },
     "profile-current-command": {
       "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele profiles current" } } }]
+    },
+    "secrets-init-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele secrets init" } } }]
     },
     "doctor-command": {
       "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele doctor" } } }]
@@ -423,6 +432,16 @@
       "type": "object",
       "required": ["profile"],
       "properties": { "profile": { "type": "string", "minLength": 1 } },
+      "additionalProperties": false
+    },
+    "secrets-init": {
+      "type": "object",
+      "required": ["backend", "instance", "profile"],
+      "properties": {
+        "backend": { "const": "vault-v1" },
+        "instance": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+        "profile": { "type": "string", "minLength": 1 }
+      },
       "additionalProperties": false
     },
     "ok": {

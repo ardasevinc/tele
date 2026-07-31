@@ -34,6 +34,7 @@
   "tele read": [{"id":7,"date":"2026-07-15T11:59:00Z","text":"hello","outgoing":false,"source_peer_ref":"user:10","source_peer_label":"Alice","sender_peer_ref":"user:10","sender_label":"Alice","reply_to_message_id":6}],
   "tele reply": {"ok":true,"outcome":"confirmed","retry_safe":false,"action":"reply","peer_ref":"user:10","message_id":8,"reconciliation_handle":"random_id:8","timestamp":"2026-07-15T12:00:00Z"},
   "tele search": [{"id":7,"date":"2026-07-15T11:59:00Z","text":"hello","outgoing":false,"source_peer_ref":"supergroup:20","source_peer_label":"Builders","sender_peer_ref":"user:10","sender_label":"Alice"}],
+  "tele secrets init": {"backend":"vault-v1","instance":"8e34c2c8-9c20-4cb4-ae66-e63ee0f3be50","profile":"main"},
   "tele send": {"ok":true,"outcome":"confirmed","retry_safe":false,"action":"send","peer_ref":"user:10","message_id":8,"reconciliation_handle":"random_id:8","timestamp":"2026-07-15T12:00:00Z"},
   "tele unread": [{"ref":"user:10","kind":"user","id":10,"title":"Alice","unread_count":1}]
 }

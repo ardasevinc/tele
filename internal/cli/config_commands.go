@@ -8,7 +8,6 @@ import (
 
 	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/output"
-	"github.com/ardasevinc/tele/internal/secrets"
 	tgapp "github.com/ardasevinc/tele/internal/telegram"
 )
 
@@ -93,7 +92,7 @@ func configCommand(s *appState) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				app := tgapp.App{Config: cfg, Profile: profileName, Paths: mustPaths(), Secrets: secrets.NewStore(), In: s.in, Out: s.out, Err: s.err}
+				app := tgapp.App{Config: cfg, Profile: profileName, Paths: mustPaths(), Secrets: s.secrets(), In: s.in, Out: s.out, Err: s.err}
 				if err := app.SetAPIHash(cmd.Context(), hash); err != nil {
 					return err
 				}

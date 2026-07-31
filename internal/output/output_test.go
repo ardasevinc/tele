@@ -5,13 +5,37 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tgerr"
 
+	"github.com/ardasevinc/tele/internal/secrets"
 	tgapp "github.com/ardasevinc/tele/internal/telegram"
 )
+
+func TestSecretErrorsHaveStableMachineCodes(t *testing.T) {
+	tests := []struct {
+		err  error
+		code string
+		exit int
+	}{
+		{secrets.ErrBackendUnconfigured, "secret_backend_unconfigured", ExitAuthOrConfig},
+		{secrets.ErrBackendUnavailable, "secret_backend_unavailable", ExitAuthOrConfig},
+		{secrets.ErrBackendLocked, "secret_backend_locked", ExitAuthOrConfig},
+		{secrets.ErrVaultUnlockFailed, "vault_unlock_failed", ExitAuthOrConfig},
+		{secrets.ErrVaultCorrupt, "vault_corrupt", ExitLocalIO},
+		{secrets.ErrVaultVersionUnsupported, "vault_version_unsupported", ExitAuthOrConfig},
+		{secrets.ErrNotFound, "secret_not_found", ExitNotFound},
+	}
+	for _, tt := range tests {
+		got := ErrorFrom(fmt.Errorf("wrapped: %w", tt.err)).Error
+		if got.Code != tt.code || got.ExitCode != tt.exit {
+			t.Fatalf("ErrorFrom(%v) = %q/%d, want %q/%d", tt.err, got.Code, got.ExitCode, tt.code, tt.exit)
+		}
+	}
+}
 
 type testMutationError struct {
 	outcome   string

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,35 @@ func TestLoadDefaultsWhenMissing(t *testing.T) {
 	}
 	if cfg.DefaultProfile != DefaultProfile {
 		t.Fatalf("DefaultProfile = %q, want %q", cfg.DefaultProfile, DefaultProfile)
+	}
+}
+
+func TestDefaultPathsRespectsXDGDataHomeOnLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux XDG contract")
+	}
+	dataHome := filepath.Join(t.TempDir(), "data")
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	paths, err := DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths.Data != filepath.Join(dataHome, "tele") {
+		t.Fatalf("Data = %q", paths.Data)
+	}
+}
+
+func TestDefaultPathsIgnoresRelativeXDGDataHome(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux XDG contract")
+	}
+	t.Setenv("XDG_DATA_HOME", "relative")
+	paths, err := DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(paths.Data, "relative") {
+		t.Fatalf("relative XDG_DATA_HOME was accepted: %q", paths.Data)
 	}
 }
 

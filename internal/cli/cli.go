@@ -72,6 +72,9 @@ type appState struct {
 	secretBackend           string
 	secretBackendSupported  bool
 	secretBackendConfigured bool
+	vaultPassphraseFD       int
+	vaultPassphraseFile     string
+	secretLazy              secrets.Store
 	managerAPI              botapi.ManagerAPI
 	managedTokenAPI         botapi.ManagedTokenAPI
 	managedBotCreator       botfactory.ManagedBotCreator
@@ -159,10 +162,13 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 	cmd.PersistentFlags().DurationVar(&s.wait, "wait", 0, "wait and retry flood limits within this total budget (max 5m)")
 	cmd.PersistentFlags().Lookup("wait").NoOptDefVal = tgapp.DefaultFloodWaitLimit.String()
 	cmd.PersistentFlags().DurationVar(&s.timeout, "timeout", 0, "total command timeout (0 selects a command-appropriate default; max 30m)")
+	cmd.PersistentFlags().IntVar(&s.vaultPassphraseFD, "vault-passphrase-fd", -1, "read the vault passphrase from file descriptor N (N >= 3)")
+	cmd.PersistentFlags().StringVar(&s.vaultPassphraseFile, "vault-passphrase-file", "", "read the vault passphrase from a protected file")
 	commands := []*cobra.Command{authCommand(s), meCommand(s), chatsCommand(s), readCommand(s), searchCommand(s), exportCommand(s), inboxCommand(s), mediaCommand(s)}
 	commands = append(commands, mutationCommands(s)...)
 	cmd.AddCommand(commands...)
 	cmd.AddCommand(configCommand(s), profilesCommand(s), doctorCommand(s))
+	cmd.AddCommand(secretsCommand(s))
 	cmd.AddCommand(botsCommand(s))
 	cmd.AddCommand(&cobra.Command{
 		Use:    "whoami",
@@ -204,14 +210,55 @@ func (s *appState) secrets() secrets.Store {
 	if s.secretStore != nil {
 		return s.secretStore
 	}
-	return secrets.NewStore()
+	if s.secretLazy == nil {
+		s.secretLazy = &secrets.LazyStore{Open: s.openSecretStore}
+	}
+	return s.secretLazy
 }
 
 func (s *appState) secretBackendInfo() (string, bool) {
 	if s.secretBackendConfigured {
 		return s.secretBackend, s.secretBackendSupported
 	}
-	return secrets.Backend()
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return "configuration unavailable", false
+	}
+	_, profile, err := cfg.ResolveProfile(s.profile)
+	if err != nil {
+		return "configuration unavailable", false
+	}
+	if profile.Secrets == nil {
+		return secrets.Backend()
+	}
+	id := secrets.BackendID(profile.Secrets.Backend)
+	return secrets.BackendDisplayName(id), id == secrets.BackendVault || id == secrets.BackendKeychainLegacy
+}
+
+func (s *appState) openSecretStore(ctx context.Context) (secrets.Store, error) {
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	profileName, profile, err := cfg.ResolveProfile(s.profile)
+	if err != nil {
+		return nil, err
+	}
+	selection := secrets.Selection{}
+	if profile.Secrets != nil {
+		selection.Backend = secrets.BackendID(profile.Secrets.Backend)
+		selection.Instance = profile.Secrets.Instance
+	}
+	var passphrase []byte
+	if selection.Backend == secrets.BackendVault {
+		passphrase, err = s.readVaultPassphrase(false)
+		if err != nil {
+			return nil, err
+		}
+		defer zeroSecret(passphrase)
+	}
+	paths := mustPaths()
+	return secrets.Open(selection, secrets.OpenOptions{DataRoot: paths.Data, Profile: profileName, Passphrase: passphrase})
 }
 
 func (s *appState) botManagerAPI() botapi.ManagerAPI {
@@ -456,7 +503,7 @@ func defaultTimeout(command string) time.Duration {
 		return defaultDownloadTimeout
 	case "tele config get", "tele config path", "tele config set",
 		"tele profiles current", "tele profiles list", "tele profiles use",
-		"tele doctor", "tele auth reset-local":
+		"tele doctor", "tele auth reset-local", "tele secrets init":
 		return defaultLocalTimeout
 	default:
 		return defaultCommandTimeout

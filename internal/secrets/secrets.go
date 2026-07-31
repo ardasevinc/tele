@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 )
 
 var (
 	ErrNotFound            = errors.New("secret not found")
 	ErrBackendUnavailable  = errors.New("secret backend unavailable")
 	ErrBackendUnconfigured = errors.New("secret backend unconfigured")
+	ErrBackendLocked       = errors.New("secret backend locked")
 )
 
 type BackendID string
@@ -35,7 +37,7 @@ type BackendError struct {
 }
 
 func (e *BackendError) Error() string {
-	if e == nil {
+	if e == nil || e.Kind == nil {
 		return "secret backend error"
 	}
 	message := e.Kind.Error()
@@ -63,4 +65,50 @@ type Store interface {
 
 type Describer interface {
 	BackendInfo() BackendInfo
+}
+
+type Selection struct {
+	Backend  BackendID
+	Instance string
+}
+
+type OpenOptions struct {
+	DataRoot   string
+	Profile    string
+	Passphrase []byte
+}
+
+func Open(selection Selection, opts OpenOptions) (Store, error) {
+	if selection.Backend == "" {
+		if runtime.GOOS == "darwin" {
+			return openLegacyKeychain()
+		}
+		return nil, &BackendError{Kind: ErrBackendUnconfigured, Detail: "run tele secrets init --backend vault-v1"}
+	}
+	switch selection.Backend {
+	case BackendVault:
+		if selection.Instance == "" {
+			return nil, &BackendError{Kind: ErrBackendUnconfigured, Backend: BackendVault, Detail: "missing instance UUID"}
+		}
+		return OpenVault(VaultPath(opts.DataRoot, opts.Profile, selection.Instance), opts.Profile, selection.Instance, opts.Passphrase)
+	case BackendKeychainLegacy:
+		return openLegacyKeychain()
+	case BackendKeychain, BackendSecretService:
+		return nil, &BackendError{Kind: ErrBackendUnavailable, Backend: selection.Backend, Detail: "backend is not implemented in this build"}
+	default:
+		return nil, &BackendError{Kind: ErrBackendUnavailable, Backend: selection.Backend, Detail: "unknown backend ID"}
+	}
+}
+
+func BackendDisplayName(id BackendID) string {
+	switch id {
+	case BackendVault:
+		return "portable vault"
+	case BackendSecretService:
+		return "Secret Service"
+	case BackendKeychain, BackendKeychainLegacy:
+		return "macOS Keychain"
+	default:
+		return string(id)
+	}
 }

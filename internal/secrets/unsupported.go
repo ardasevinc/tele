@@ -14,23 +14,23 @@ func NewStore() Store {
 }
 
 func Backend() (name string, supported bool) {
-	return "unsupported on " + runtime.GOOS, false
+	return "unconfigured on " + runtime.GOOS, false
 }
 
 func (unsupportedStore) Get(context.Context, string, string) ([]byte, error) {
-	return nil, unavailableError()
+	return nil, unconfiguredError()
 }
 
 func (unsupportedStore) Set(context.Context, string, string, []byte) error {
-	return unavailableError()
+	return unconfiguredError()
 }
 
 func (unsupportedStore) Delete(context.Context, string, string) error {
-	return unavailableError()
+	return unconfiguredError()
 }
 
 func (unsupportedStore) BackendInfo() BackendInfo {
-	return BackendInfo{Name: "unsupported on " + runtime.GOOS, Supported: false}
+	return BackendInfo{Name: "unconfigured on " + runtime.GOOS, Supported: false}
 }
 
 type UnsupportedError struct {
@@ -38,13 +38,13 @@ type UnsupportedError struct {
 }
 
 func (e *UnsupportedError) Error() string {
-	return "secret storage is macOS Keychain-only in v1, current GOOS=" + e.GOOS
+	return "no default secret backend is configured, current GOOS=" + e.GOOS
 }
 
 func (e *UnsupportedError) Unwrap() error {
-	return ErrBackendUnavailable
+	return ErrBackendUnconfigured
 }
 
-func unavailableError() error {
+func unconfiguredError() error {
 	return &UnsupportedError{GOOS: runtime.GOOS}
 }

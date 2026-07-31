@@ -12,6 +12,7 @@ import (
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tgerr"
 
+	"github.com/ardasevinc/tele/internal/secrets"
 	tgapp "github.com/ardasevinc/tele/internal/telegram"
 )
 
@@ -210,6 +211,22 @@ func ErrorFrom(err error) ErrorResponse {
 	if errors.Is(err, tgapp.ErrPendingAuthInvalid) {
 		body.Code = "pending_auth_invalid"
 	}
+	switch {
+	case errors.Is(err, secrets.ErrBackendUnconfigured):
+		body.Code = "secret_backend_unconfigured"
+	case errors.Is(err, secrets.ErrBackendUnavailable):
+		body.Code = "secret_backend_unavailable"
+	case errors.Is(err, secrets.ErrBackendLocked):
+		body.Code = "secret_backend_locked"
+	case errors.Is(err, secrets.ErrVaultUnlockFailed):
+		body.Code = "vault_unlock_failed"
+	case errors.Is(err, secrets.ErrVaultCorrupt):
+		body.Code = "vault_corrupt"
+	case errors.Is(err, secrets.ErrVaultVersionUnsupported):
+		body.Code = "vault_version_unsupported"
+	case errors.Is(err, secrets.ErrNotFound):
+		body.Code = "secret_not_found"
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		body.Code = "timeout"
 	} else if errors.Is(err, context.Canceled) {
@@ -252,11 +269,12 @@ func ExitCodeFor(code string) int {
 	switch code {
 	case "invalid_input":
 		return ExitInvalidInput
-	case "not_authorized", "password_required", "missing_api_hash", "missing_api_id", "pending_auth_expired", "pending_auth_invalid":
+	case "not_authorized", "password_required", "missing_api_hash", "missing_api_id", "pending_auth_expired", "pending_auth_invalid",
+		"secret_backend_unconfigured", "secret_backend_unavailable", "secret_backend_locked", "vault_unlock_failed", "vault_version_unsupported":
 		return ExitAuthOrConfig
-	case "peer_not_found":
+	case "peer_not_found", "secret_not_found":
 		return ExitNotFound
-	case "output_failed":
+	case "output_failed", "vault_corrupt":
 		return ExitLocalIO
 	case "mutation_outcome_unknown", "mutation_confirmed_output_failed":
 		return ExitMutationReconcile

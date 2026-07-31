@@ -21,8 +21,8 @@ func TestUnsupportedStoreFailsEveryOperationTruthfully(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.run()
-			if !errors.Is(err, ErrBackendUnavailable) {
-				t.Fatalf("error = %v, want ErrBackendUnavailable", err)
+			if !errors.Is(err, ErrBackendUnconfigured) {
+				t.Fatalf("error = %v, want ErrBackendUnconfigured", err)
 			}
 			if errors.Is(err, ErrNotFound) {
 				t.Fatalf("unsupported backend masqueraded as missing secret: %v", err)

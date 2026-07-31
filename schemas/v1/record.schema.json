@@ -35,6 +35,8 @@
         { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
         { "$ref": "command-envelope.schema.json#/$defs/profile" },
         { "$ref": "command-envelope.schema.json#/$defs/secrets-init" },
+        { "$ref": "command-envelope.schema.json#/$defs/secret-migration" },
+        { "$ref": "command-envelope.schema.json#/$defs/secrets-purge" },
         { "$ref": "command-envelope.schema.json#/$defs/doctor" },
         { "$ref": "command-envelope.schema.json#/$defs/bot-manager-status" },
         { "$ref": "command-envelope.schema.json#/$defs/bot-username-check" },

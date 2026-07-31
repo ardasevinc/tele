@@ -12,6 +12,8 @@ var (
 	ErrBackendUnavailable  = errors.New("secret backend unavailable")
 	ErrBackendUnconfigured = errors.New("secret backend unconfigured")
 	ErrBackendLocked       = errors.New("secret backend locked")
+	ErrCatalogIncomplete   = errors.New("secret catalog incomplete")
+	ErrMigrationIncomplete = errors.New("secret migration incomplete")
 )
 
 type BackendID string
@@ -65,6 +67,25 @@ type Store interface {
 
 type Describer interface {
 	BackendInfo() BackendInfo
+}
+
+type Snapshotter interface {
+	Snapshot(context.Context) (map[string][]byte, error)
+}
+
+type VaultDiagnostics struct {
+	Path             string
+	FormatVersion    uint16
+	PayloadSchema    uint16
+	Generation       uint64
+	ArgonMemoryKiB   uint32
+	ArgonIterations  uint32
+	ArgonParallelism uint8
+	Records          int
+}
+
+type VaultDiagnoser interface {
+	VaultDiagnostics(context.Context) (VaultDiagnostics, error)
 }
 
 type Selection struct {

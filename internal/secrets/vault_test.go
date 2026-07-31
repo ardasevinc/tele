@@ -253,6 +253,28 @@ func TestVaultHeaderLayout(t *testing.T) {
 	}
 }
 
+func TestVaultDiagnosticsExposeMetadataNotValues(t *testing.T) {
+	path, passphrase := createTestVault(t)
+	store, err := OpenVault(path, "main", testVaultInstance, passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Set(context.Background(), "main", "api-hash", []byte("SUPERSECRET")); err != nil {
+		t.Fatal(err)
+	}
+	diagnostics, err := store.VaultDiagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagnostics.FormatVersion != 1 || diagnostics.PayloadSchema != 1 || diagnostics.Generation != 2 || diagnostics.Records != 1 {
+		t.Fatalf("diagnostics = %+v", diagnostics)
+	}
+	if diagnostics.ArgonMemoryKiB != 64*1024 || diagnostics.ArgonIterations != 3 || diagnostics.ArgonParallelism != 1 {
+		t.Fatalf("Argon diagnostics = %+v", diagnostics)
+	}
+}
+
 func TestReadPassphraseFileRejectsUnsafeMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credential")
 	if err := os.WriteFile(path, []byte("secret\n"), 0o644); err != nil {

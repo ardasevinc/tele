@@ -235,6 +235,31 @@ func (s *appState) secretBackendInfo() (string, bool) {
 	return secrets.BackendDisplayName(id), id == secrets.BackendVault || id == secrets.BackendKeychainLegacy
 }
 
+func (s *appState) secretBackendSelection() (secrets.BackendID, string) {
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return "", ""
+	}
+	_, profile, err := cfg.ResolveProfile(s.profile)
+	if err != nil || profile.Secrets == nil {
+		return "", ""
+	}
+	return secrets.BackendID(profile.Secrets.Backend), profile.Secrets.Instance
+}
+
+func (s *appState) vaultUnlockSource() string {
+	if s.vaultPassphraseFD >= 3 {
+		return "fd"
+	}
+	if s.vaultPassphraseFile != "" {
+		return "file"
+	}
+	if s.json || s.jsonl {
+		return "none"
+	}
+	return "tty"
+}
+
 func (s *appState) openSecretStore(ctx context.Context) (secrets.Store, error) {
 	cfg, err := s.loadConfig()
 	if err != nil {
@@ -503,7 +528,7 @@ func defaultTimeout(command string) time.Duration {
 		return defaultDownloadTimeout
 	case "tele config get", "tele config path", "tele config set",
 		"tele profiles current", "tele profiles list", "tele profiles use",
-		"tele doctor", "tele auth reset-local", "tele secrets init":
+		"tele doctor", "tele auth reset-local", "tele secrets init", "tele secrets migrate", "tele secrets purge":
 		return defaultLocalTimeout
 	default:
 		return defaultCommandTimeout

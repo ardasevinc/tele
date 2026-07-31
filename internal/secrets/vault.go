@@ -270,6 +270,29 @@ func (s *VaultStore) Snapshot(ctx context.Context) (map[string][]byte, error) {
 	return snapshot, err
 }
 
+func (s *VaultStore) VaultDiagnostics(ctx context.Context) (VaultDiagnostics, error) {
+	var diagnostics VaultDiagnostics
+	err := privatefs.WithLock(ctx, s.path+".lock", func() error {
+		data, payload, err := s.readCurrent()
+		if err != nil {
+			return err
+		}
+		defer zeroBytes(data)
+		header, err := parseVaultHeader(data, s.instanceID)
+		if err != nil {
+			return err
+		}
+		diagnostics = VaultDiagnostics{
+			Path: s.path, FormatVersion: vaultFormatVersion, PayloadSchema: header.schema,
+			Generation: header.generation, ArgonMemoryKiB: header.memory,
+			ArgonIterations: header.time, ArgonParallelism: header.threads,
+			Records: len(payload.Records),
+		}
+		return nil
+	})
+	return diagnostics, err
+}
+
 func (s *VaultStore) validateAccess(profile, key string, value []byte) error {
 	if s == nil {
 		return fmt.Errorf("vault store is nil")
@@ -280,7 +303,7 @@ func (s *VaultStore) validateAccess(profile, key string, value []byte) error {
 	if !utf8.ValidString(key) || len(key) == 0 || len(key) > vaultMaxKeySize {
 		return fmt.Errorf("vault key must be valid UTF-8 and 1..%d bytes", vaultMaxKeySize)
 	}
-	if value != nil && len(value) > vaultMaxValueSize {
+	if len(value) > vaultMaxValueSize {
 		return fmt.Errorf("vault value exceeds %d bytes", vaultMaxValueSize)
 	}
 	return nil
@@ -599,6 +622,41 @@ func NewVaultInstance() (string, error) {
 
 func VaultPath(dataRoot, profile, instance string) string {
 	return filepath.Join(dataRoot, profile, "secrets", instance+".vault")
+}
+
+func ValidateVaultInstance(instance string) error {
+	_, err := parseUUID(instance)
+	return err
+}
+
+func InspectVaultInstance(path, instance string) error {
+	instanceID, err := parseUUID(instance)
+	if err != nil {
+		return err
+	}
+	data, err := readVaultFile(path)
+	if err != nil {
+		return err
+	}
+	defer zeroBytes(data)
+	_, err = parseVaultHeader(data, instanceID)
+	return err
+}
+
+func PurgeVault(ctx context.Context, path, instance string) error {
+	return privatefs.WithLock(ctx, path+".lock", func() error {
+		if err := InspectVaultInstance(path, instance); err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+		dir, err := os.Open(filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		return errors.Join(dir.Sync(), dir.Close())
+	})
 }
 
 func rejectExistingSymlinkComponents(path string) error {

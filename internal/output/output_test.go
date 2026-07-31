@@ -28,6 +28,8 @@ func TestSecretErrorsHaveStableMachineCodes(t *testing.T) {
 		{secrets.ErrVaultCorrupt, "vault_corrupt", ExitLocalIO},
 		{secrets.ErrVaultVersionUnsupported, "vault_version_unsupported", ExitAuthOrConfig},
 		{secrets.ErrNotFound, "secret_not_found", ExitNotFound},
+		{secrets.ErrCatalogIncomplete, "secret_catalog_incomplete", ExitGeneral},
+		{secrets.ErrMigrationIncomplete, "secret_migration_incomplete", ExitGeneral},
 	}
 	for _, tt := range tests {
 		got := ErrorFrom(fmt.Errorf("wrapped: %w", tt.err)).Error

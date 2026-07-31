@@ -37,6 +37,30 @@ func (s *LazyStore) Delete(ctx context.Context, profile, key string) error {
 	return store.Delete(ctx, profile, key)
 }
 
+func (s *LazyStore) Snapshot(ctx context.Context) (map[string][]byte, error) {
+	store, err := s.resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	snapshotter, ok := store.(Snapshotter)
+	if !ok {
+		return nil, &BackendError{Kind: ErrCatalogIncomplete, Detail: "backend does not expose an authoritative snapshot"}
+	}
+	return snapshotter.Snapshot(ctx)
+}
+
+func (s *LazyStore) VaultDiagnostics(ctx context.Context) (VaultDiagnostics, error) {
+	store, err := s.resolve(ctx)
+	if err != nil {
+		return VaultDiagnostics{}, err
+	}
+	diagnoser, ok := store.(VaultDiagnoser)
+	if !ok {
+		return VaultDiagnostics{}, &BackendError{Kind: ErrBackendUnavailable, Detail: "backend is not a portable vault"}
+	}
+	return diagnoser.VaultDiagnostics(ctx)
+}
+
 func (s *LazyStore) resolve(ctx context.Context) (Store, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

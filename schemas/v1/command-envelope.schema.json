@@ -110,6 +110,18 @@
         },
         {
           "properties": {
+            "meta": { "$ref": "#/$defs/secrets-migrate-command" },
+            "data": { "$ref": "#/$defs/secret-migration" }
+          }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/secrets-purge-command" },
+            "data": { "$ref": "#/$defs/secrets-purge" }
+          }
+        },
+        {
+          "properties": {
             "meta": { "$ref": "#/$defs/doctor-command" },
             "data": { "$ref": "#/$defs/doctor" }
           }
@@ -218,6 +230,12 @@
     },
     "secrets-init-command": {
       "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele secrets init" } } }]
+    },
+    "secrets-migrate-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele secrets migrate" } } }]
+    },
+    "secrets-purge-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele secrets purge" } } }]
     },
     "doctor-command": {
       "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele doctor" } } }]
@@ -441,6 +459,41 @@
         "backend": { "const": "vault-v1" },
         "instance": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
         "profile": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "secret-migration-endpoint": {
+      "type": "object",
+      "required": ["backend"],
+      "properties": {
+        "backend": { "enum": ["keychain-v1", "keychain-legacy-v1", "secret-service-v1", "vault-v1"] },
+        "instance": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
+      },
+      "additionalProperties": false
+    },
+    "secret-migration": {
+      "type": "object",
+      "required": ["schema", "profile", "source", "target", "key_count", "verified_at"],
+      "properties": {
+        "schema": { "const": "tele/secret-migration/v1" },
+        "profile": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/$defs/secret-migration-endpoint" },
+        "target": { "$ref": "#/$defs/secret-migration-endpoint" },
+        "key_count": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "verified_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "secrets-purge": {
+      "type": "object",
+      "required": ["profile", "backend", "instance", "path", "active", "purged"],
+      "properties": {
+        "profile": { "type": "string", "minLength": 1 },
+        "backend": { "const": "vault-v1" },
+        "instance": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+        "path": { "type": "string", "minLength": 1 },
+        "active": { "type": "boolean" },
+        "purged": { "type": "boolean" }
       },
       "additionalProperties": false
     },

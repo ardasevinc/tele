@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -83,6 +84,78 @@ func TestSecretsInitAndAPIHashRoundTripOnLinux(t *testing.T) {
 	hash, err := store.Get(context.Background(), "main", "api-hash")
 	if err != nil || string(hash) != "SUPERSECRET" {
 		t.Fatalf("stored api hash = %q, %v", hash, err)
+	}
+
+	oldInstance := profile.Secrets.Instance
+	oldPath := secrets.VaultPath(filepath.Join(dataHome, "tele"), "main", oldInstance)
+	stdout.Reset()
+	stderr.Reset()
+	state = &appState{in: strings.NewReader("must not be read"), out: &stdout, err: &stderr}
+	err = executeWithState(context.Background(), []string{
+		"--json", "--config", configPath, "--profile", "main",
+		"--vault-passphrase-file", passphrasePath,
+		"secrets", "migrate", "--to", "vault-v1",
+	}, state)
+	if err != nil {
+		t.Fatalf("secrets migrate: %v\nstderr=%s", err, stderr.String())
+	}
+	var migrationEnvelope struct {
+		Data migrationReceipt `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &migrationEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	receipt := migrationEnvelope.Data
+	if receipt.Source.Instance != oldInstance || receipt.Target.Instance == "" || receipt.Target.Instance == oldInstance || receipt.KeyCount != 1 {
+		t.Fatalf("migration receipt = %+v", receipt)
+	}
+	cfg, err = config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile = cfg.Profiles["main"]
+	if profile.Secrets.Instance != receipt.Target.Instance {
+		t.Fatalf("active selector = %+v, receipt target = %+v", profile.Secrets, receipt.Target)
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		t.Fatalf("retained source vault: %v", err)
+	}
+	target, err := secrets.OpenVault(
+		secrets.VaultPath(filepath.Join(dataHome, "tele"), "main", receipt.Target.Instance),
+		"main", receipt.Target.Instance, passphrase,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	hash, err = target.Get(context.Background(), "main", "api-hash")
+	if err != nil || string(hash) != "SUPERSECRET" {
+		t.Fatalf("migrated api hash = %q, %v", hash, err)
+	}
+	receiptPath := filepath.Join(dataHome, "tele", "main", "secrets", "migrations", receipt.Target.Instance+".json")
+	if info, err := os.Stat(receiptPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("migration receipt mode = %v, %v", info, err)
+	}
+	purgeState := &appState{cfgPath: configPath, profile: "main"}
+	preview, err := purgeState.purgeVault(context.Background(), oldInstance, "")
+	if err != nil || preview.Active || preview.Purged {
+		t.Fatalf("purge preview = %+v, %v", preview, err)
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		t.Fatalf("preview deleted source vault: %v", err)
+	}
+	if _, err := purgeState.purgeVault(context.Background(), receipt.Target.Instance, receipt.Target.Instance); err == nil || !strings.Contains(err.Error(), "active") {
+		t.Fatalf("active purge error = %v", err)
+	}
+	if _, err := purgeState.purgeVault(context.Background(), oldInstance, receipt.Target.Instance); err == nil || !strings.Contains(err.Error(), "exactly match") {
+		t.Fatalf("mismatched confirmation error = %v", err)
+	}
+	purged, err := purgeState.purgeVault(context.Background(), oldInstance, oldInstance)
+	if err != nil || !purged.Purged {
+		t.Fatalf("purge = %+v, %v", purged, err)
+	}
+	if _, err := os.Stat(oldPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("purged source still exists: %v", err)
 	}
 }
 

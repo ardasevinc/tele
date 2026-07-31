@@ -226,6 +226,10 @@ func ErrorFrom(err error) ErrorResponse {
 		body.Code = "vault_version_unsupported"
 	case errors.Is(err, secrets.ErrNotFound):
 		body.Code = "secret_not_found"
+	case errors.Is(err, secrets.ErrCatalogIncomplete):
+		body.Code = "secret_catalog_incomplete"
+	case errors.Is(err, secrets.ErrMigrationIncomplete):
+		body.Code = "secret_migration_incomplete"
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		body.Code = "timeout"

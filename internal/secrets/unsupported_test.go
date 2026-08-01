@@ -42,3 +42,10 @@ func TestUnsupportedStoreDescribesUnavailableBackend(t *testing.T) {
 		t.Fatalf("backend info = %+v", info)
 	}
 }
+
+func TestNativeKeychainIsExplicitlyUnavailableOffDarwin(t *testing.T) {
+	_, err := OpenKeychain(context.Background(), t.TempDir(), "main", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+	if !errors.Is(err, ErrBackendUnavailable) {
+		t.Fatalf("OpenKeychain error = %v, want ErrBackendUnavailable", err)
+	}
+}

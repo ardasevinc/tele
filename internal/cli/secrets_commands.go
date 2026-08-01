@@ -97,8 +97,10 @@ func (s *appState) purgeSecrets(ctx context.Context, backend secrets.BackendID, 
 		return s.purgeVault(ctx, instance, confirmation)
 	case secrets.BackendSecretService:
 		return s.purgeSecretService(ctx, instance, confirmation)
+	case secrets.BackendKeychain:
+		return s.purgeKeychain(ctx, instance, confirmation)
 	default:
-		return purgeResult{}, fmt.Errorf("backend must be %s or %s in this build", secrets.BackendVault, secrets.BackendSecretService)
+		return purgeResult{}, fmt.Errorf("backend must be %s, %s, or %s", secrets.BackendVault, secrets.BackendSecretService, secrets.BackendKeychain)
 	}
 }
 
@@ -108,8 +110,10 @@ func (s *appState) initSecrets(ctx context.Context, backend secrets.BackendID) (
 		return s.initVault(ctx)
 	case secrets.BackendSecretService:
 		return s.initSecretService(ctx)
+	case secrets.BackendKeychain:
+		return s.initKeychain(ctx)
 	default:
-		return secretInitResult{}, fmt.Errorf("backend must be %s or %s in this build", secrets.BackendVault, secrets.BackendSecretService)
+		return secretInitResult{}, fmt.Errorf("backend must be %s, %s, or %s", secrets.BackendVault, secrets.BackendSecretService, secrets.BackendKeychain)
 	}
 }
 
@@ -262,9 +266,66 @@ func (s *appState) initSecretService(ctx context.Context) (secretInitResult, err
 	return result, err
 }
 
+func (s *appState) initKeychain(ctx context.Context) (secretInitResult, error) {
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return secretInitResult{}, err
+	}
+	profileName, profile, err := cfg.ResolveProfile(s.profile)
+	if err != nil {
+		return secretInitResult{}, err
+	}
+	if profile.Secrets != nil {
+		return secretInitResult{}, fmt.Errorf("profile %q already selects secret backend %q", profileName, profile.Secrets.Backend)
+	}
+	instance, err := secrets.NewVaultInstance()
+	if err != nil {
+		return secretInitResult{}, err
+	}
+	paths, err := s.paths()
+	if err != nil {
+		return secretInitResult{}, err
+	}
+	result := secretInitResult{Backend: secrets.BackendKeychain, Instance: instance, Profile: profileName}
+	err = secrets.WithProfileLock(ctx, paths.Data, profileName, func(ctx context.Context) error {
+		latest, err := s.loadConfig()
+		if err != nil {
+			return err
+		}
+		_, latestProfile, err := latest.ResolveProfile(profileName)
+		if err != nil {
+			return err
+		}
+		if latestProfile.Secrets != nil {
+			return fmt.Errorf("profile %q already selects secret backend %q", profileName, latestProfile.Secrets.Backend)
+		}
+		store, err := secrets.InitKeychain(ctx, paths.Data, profileName, instance)
+		if err != nil {
+			return err
+		}
+		store.Close()
+		return config.Update(ctx, s.cfgPath, func(current *config.Config) error {
+			_, currentProfile, err := current.ResolveProfile(profileName)
+			if err != nil {
+				return err
+			}
+			if currentProfile.Secrets != nil {
+				return fmt.Errorf("profile %q selected another secret backend during initialization", profileName)
+			}
+			if _, err := current.EnsureProfile(profileName); err != nil {
+				return err
+			}
+			currentProfile.Secrets = &config.SecretBackend{Backend: string(secrets.BackendKeychain), Instance: instance}
+			current.Profiles[profileName] = currentProfile
+			return nil
+		})
+	})
+	return result, err
+}
+
 func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.BackendID) (migrationReceipt, error) {
-	if targetBackend != secrets.BackendVault && targetBackend != secrets.BackendSecretService {
-		return migrationReceipt{}, fmt.Errorf("target backend must be %s or %s in this build", secrets.BackendVault, secrets.BackendSecretService)
+	if targetBackend != secrets.BackendVault && targetBackend != secrets.BackendSecretService && targetBackend != secrets.BackendKeychain {
+		return migrationReceipt{}, fmt.Errorf("target backend must be %s, %s, or %s", secrets.BackendVault, secrets.BackendSecretService, secrets.BackendKeychain)
 	}
 	cfg, err := s.loadConfig()
 	if err != nil {
@@ -381,6 +442,8 @@ func createMigrationTarget(ctx context.Context, backend secrets.BackendID, dataR
 		return secrets.CreateVault(ctx, secrets.VaultPath(dataRoot, profile, instance), profile, instance, passphrase)
 	case secrets.BackendSecretService:
 		return secrets.InitSecretService(ctx, dataRoot, profile, instance)
+	case secrets.BackendKeychain:
+		return secrets.InitKeychain(ctx, dataRoot, profile, instance)
 	default:
 		return nil, &secrets.BackendError{Kind: secrets.ErrBackendUnavailable, Backend: backend}
 	}
@@ -484,6 +547,61 @@ func (s *appState) purgeSecretService(ctx context.Context, instance, confirmatio
 			return fmt.Errorf("refusing to purge active Secret Service instance %q", instance)
 		}
 		_, err = secrets.PurgeSecretService(ctx, paths.Data, profileName, instance)
+		return err
+	})
+	if err != nil {
+		return result, err
+	}
+	result.Purged = true
+	return result, nil
+}
+
+func (s *appState) purgeKeychain(ctx context.Context, instance, confirmation string) (purgeResult, error) {
+	if err := secrets.ValidateVaultInstance(instance); err != nil {
+		return purgeResult{}, err
+	}
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return purgeResult{}, err
+	}
+	profileName, profile, err := cfg.ResolveProfile(s.profile)
+	if err != nil {
+		return purgeResult{}, err
+	}
+	paths, err := s.paths()
+	if err != nil {
+		return purgeResult{}, err
+	}
+	result := purgeResult{
+		Profile: profileName, Backend: secrets.BackendKeychain, Instance: instance,
+		Path: "keychain://" + profileName + "/" + instance,
+	}
+	if profile.Secrets != nil && profile.Secrets.Backend == string(secrets.BackendKeychain) && profile.Secrets.Instance == instance {
+		result.Active = true
+		return result, fmt.Errorf("refusing to purge active Keychain instance %q", instance)
+	}
+	if err := secrets.InspectKeychain(ctx, paths.Data, profileName, instance); err != nil {
+		return result, err
+	}
+	if confirmation == "" {
+		return result, nil
+	}
+	if confirmation != instance {
+		return result, fmt.Errorf("--confirm-instance must exactly match %q", instance)
+	}
+	err = secrets.WithProfileLock(ctx, paths.Data, profileName, func(ctx context.Context) error {
+		latest, err := s.loadConfig()
+		if err != nil {
+			return err
+		}
+		_, latestProfile, err := latest.ResolveProfile(profileName)
+		if err != nil {
+			return err
+		}
+		if latestProfile.Secrets != nil && latestProfile.Secrets.Backend == string(secrets.BackendKeychain) && latestProfile.Secrets.Instance == instance {
+			return fmt.Errorf("refusing to purge active Keychain instance %q", instance)
+		}
+		_, err = secrets.PurgeKeychain(ctx, paths.Data, profileName, instance)
 		return err
 	})
 	if err != nil {

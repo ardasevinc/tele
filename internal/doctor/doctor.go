@@ -208,7 +208,7 @@ func inspectSecretCatalog(ctx context.Context, opts Options, report *Report) {
 		report.add("secret_catalog", Pass, "vault payload is authoritative", map[string]any{"generation": diagnostics.Generation, "mappings": diagnostics.Records, "orphans": 0})
 		return
 	}
-	if opts.SecretBackendID != secrets.BackendSecretService {
+	if opts.SecretBackendID != secrets.BackendSecretService && opts.SecretBackendID != secrets.BackendKeychain {
 		report.add("secret_catalog", Skipped, "active backend has no v1 catalog", nil)
 		return
 	}

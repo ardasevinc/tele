@@ -456,7 +456,7 @@
       "type": "object",
       "required": ["backend", "instance", "profile"],
       "properties": {
-        "backend": { "enum": ["vault-v1", "secret-service-v1"] },
+        "backend": { "enum": ["vault-v1", "secret-service-v1", "keychain-v1"] },
         "instance": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
         "profile": { "type": "string", "minLength": 1 }
       },

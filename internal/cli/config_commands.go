@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -8,6 +9,7 @@ import (
 
 	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/output"
+	"github.com/ardasevinc/tele/internal/secrets"
 	tgapp "github.com/ardasevinc/tele/internal/telegram"
 )
 
@@ -175,13 +177,7 @@ func profilesCommand(s *appState) *cobra.Command {
 		Short: "Create or select the default profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := config.Update(cmd.Context(), s.cfgPath, func(cfg *config.Config) error {
-				if _, err := cfg.EnsureProfile(args[0]); err != nil {
-					return err
-				}
-				cfg.DefaultProfile = args[0]
-				return nil
-			}); err != nil {
+			if err := s.useProfile(cmd.Context(), args[0]); err != nil {
 				return err
 			}
 			return writeValue(s, map[string]string{"default_profile": args[0]}, func(w output.Writer) error {
@@ -207,4 +203,29 @@ func profilesCommand(s *appState) *cobra.Command {
 		},
 	})
 	return cmd
+}
+
+func (s *appState) useProfile(ctx context.Context, name string) error {
+	if err := config.ValidateProfileName(name); err != nil {
+		return err
+	}
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return err
+	}
+	_, exists := cfg.Profiles[name]
+	if !exists && newProfileBackend() == secrets.BackendKeychain {
+		profileState := *s
+		profileState.profile = name
+		if _, err := profileState.initKeychain(ctx); err != nil {
+			return err
+		}
+	}
+	return config.Update(ctx, s.cfgPath, func(cfg *config.Config) error {
+		if _, err := cfg.EnsureProfile(name); err != nil {
+			return err
+		}
+		cfg.DefaultProfile = name
+		return nil
+	})
 }

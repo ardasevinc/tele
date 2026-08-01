@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"unicode/utf8"
 )
 
 var (
@@ -99,6 +100,34 @@ type CatalogDiagnoser interface {
 	CatalogDiagnostics(context.Context) (CatalogDiagnostics, error)
 }
 
+func validateSecretKeyValue(key string, value []byte) error {
+	if !utf8.ValidString(key) || len(key) == 0 || len(key) > vaultMaxKeySize {
+		return fmt.Errorf("secret key must be 1..%d bytes", vaultMaxKeySize)
+	}
+	if len(value) > vaultMaxValueSize {
+		return fmt.Errorf("secret value exceeds %d bytes", vaultMaxValueSize)
+	}
+	return nil
+}
+
+func equalStringMap(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, value := range a {
+		if b[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func zeroSnapshotValues(snapshot map[string][]byte) {
+	for _, value := range snapshot {
+		zeroBytes(value)
+	}
+}
+
 type Selection struct {
 	Backend  BackendID
 	Instance string
@@ -131,7 +160,10 @@ func Open(ctx context.Context, selection Selection, opts OpenOptions) (Store, er
 		}
 		return OpenSecretService(ctx, opts.DataRoot, opts.Profile, selection.Instance)
 	case BackendKeychain:
-		return nil, &BackendError{Kind: ErrBackendUnavailable, Backend: selection.Backend, Detail: "backend is not implemented in this build"}
+		if selection.Instance == "" {
+			return nil, &BackendError{Kind: ErrBackendUnconfigured, Backend: BackendKeychain, Detail: "missing instance UUID"}
+		}
+		return OpenKeychain(ctx, opts.DataRoot, opts.Profile, selection.Instance)
 	default:
 		return nil, &BackendError{Kind: ErrBackendUnavailable, Backend: selection.Backend, Detail: "unknown backend ID"}
 	}

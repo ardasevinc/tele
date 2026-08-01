@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
-	"unicode/utf8"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -507,39 +506,11 @@ func (s *SecretServiceStore) validateManifest(manifest secretManifest) error {
 	return nil
 }
 
-func validateSecretKeyValue(key string, value []byte) error {
-	if !utf8.ValidString(key) || len(key) == 0 || len(key) > vaultMaxKeySize {
-		return fmt.Errorf("secret key must be 1..%d bytes", vaultMaxKeySize)
-	}
-	if len(value) > vaultMaxValueSize {
-		return fmt.Errorf("secret value exceeds %d bytes", vaultMaxValueSize)
-	}
-	return nil
-}
-
 func (s *SecretServiceStore) backendError(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrBackendLocked) {
 		return err
 	}
 	return &BackendError{Kind: ErrBackendUnavailable, Backend: BackendSecretService, Detail: err.Error()}
-}
-
-func equalStringMap(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for key, value := range a {
-		if b[key] != value {
-			return false
-		}
-	}
-	return true
-}
-
-func zeroSnapshotValues(snapshot map[string][]byte) {
-	for _, value := range snapshot {
-		zeroBytes(value)
-	}
 }
 
 type dbusSecretService struct {

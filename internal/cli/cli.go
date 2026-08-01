@@ -232,7 +232,7 @@ func (s *appState) secretBackendInfo() (string, bool) {
 		return secrets.Backend()
 	}
 	id := secrets.BackendID(profile.Secrets.Backend)
-	return secrets.BackendDisplayName(id), id == secrets.BackendVault || id == secrets.BackendKeychainLegacy || id == secrets.BackendSecretService
+	return secrets.BackendDisplayName(id), id == secrets.BackendVault || id == secrets.BackendKeychain || id == secrets.BackendKeychainLegacy || id == secrets.BackendSecretService
 }
 
 func (s *appState) secretBackendSelection() (secrets.BackendID, string) {

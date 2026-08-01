@@ -43,6 +43,7 @@ jobs:
             export XDG_RUNTIME_DIR="$runtime_dir"
             eval "$(printf "tele-ci-keyring\n" | gnome-keyring-daemon --unlock --components=secrets)"
             go test -tags=secretserviceintegration ./internal/secrets -run TestSecretServiceRealProviderLifecycle -count=1
+            go test -tags=secretserviceintegration ./internal/cli -run TestSecretServiceVaultMigrationRealLifecycle -count=1
           '
       - name: Vet
         env:
@@ -60,6 +61,8 @@ jobs:
           tar -xzf "tele_${version}_linux_amd64.tar.gz" -C "$RUNNER_TEMP/tele-smoke"
           file "$RUNNER_TEMP/tele-smoke/tele" | grep -q 'statically linked'
           test "$("$RUNNER_TEMP/tele-smoke/tele" --version)" = "tele version $version ($GITHUB_SHA)"
+          "$GITHUB_WORKSPACE/.github/scripts/smoke-linux-release.sh" \
+            "$RUNNER_TEMP/tele-smoke" "$version" "$GITHUB_SHA"
 
   macos:
     name: macOS contracts
@@ -82,7 +85,37 @@ jobs:
           GOPROXY: "off"
         run: |
           go test -tags=keychainintegration ./internal/secrets -run TestNativeKeychainRealLifecycle -count=1
-          go test -tags=keychainintegration ./internal/cli -run TestLegacyKeychainMigrationRealLifecycle -count=1
+          go test -tags=keychainintegration ./internal/cli -run 'Test(LegacyKeychainMigrationRealLifecycle|KeychainVaultMigrationRealLifecycle)' -count=1
+
+  linux-arm64:
+    name: Linux arm64 release parity
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Restore dependencies
+        run: go mod download
+      - name: Test native arm64 state and command contracts
+        env:
+          GOPROXY: "off"
+        run: go test ./internal/config ./internal/privatefs ./internal/secrets ./internal/session ./internal/cli
+      - name: Package and smoke the native arm64 archive
+        env:
+          GOPROXY: "off"
+        run: |
+          version="$(awk -F'"' '/^[[:space:]]*Version = / {print $2}' internal/buildinfo/buildinfo.go)"
+          go run ./scripts/release --version "$version" --commit "$GITHUB_SHA" --output "$RUNNER_TEMP/dist"
+          cd "$RUNNER_TEMP/dist"
+          sha256sum --check checksums.txt
+          mkdir "$RUNNER_TEMP/tele-smoke"
+          tar -xzf "tele_${version}_linux_arm64.tar.gz" -C "$RUNNER_TEMP/tele-smoke"
+          file "$RUNNER_TEMP/tele-smoke/tele" | grep -q 'ARM aarch64.*statically linked'
+          "$GITHUB_WORKSPACE/.github/scripts/smoke-linux-release.sh" \
+            "$RUNNER_TEMP/tele-smoke" "$version" "$GITHUB_SHA"
 
   lint-security:
     name: Lint and security

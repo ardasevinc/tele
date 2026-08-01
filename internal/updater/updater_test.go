@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -125,6 +126,70 @@ func TestLatestRejectsMutableOrPrereleaseMetadata(t *testing.T) {
 			t.Fatalf("latest accepted %s", payload)
 		}
 		server.Close()
+	}
+}
+
+func TestLatestRejectsBadHTTPAndMalformedMetadata(t *testing.T) {
+	oversized := strings.Repeat("x", maxBody+1)
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+	}{
+		{name: "http status", statusCode: http.StatusServiceUnavailable, body: `{"message":"try later"}`},
+		{name: "malformed JSON", statusCode: http.StatusOK, body: `{"tag_name":`},
+		{name: "trailing JSON", statusCode: http.StatusOK, body: releasePayload("v1.2.0") + `{}`},
+		{name: "oversized response", statusCode: http.StatusOK, body: oversized},
+		{name: "invalid tag", statusCode: http.StatusOK, body: `{"tag_name":"latest","html_url":"https://example.test","immutable":true}`},
+		{name: "missing URL", statusCode: http.StatusOK, body: `{"tag_name":"v1.2.0","immutable":true}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.statusCode)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+			client := &Client{HTTPClient: server.Client(), APIBase: server.URL}
+			if _, err := client.latest(context.Background()); err == nil {
+				t.Fatal("latest accepted hostile release metadata")
+			}
+		})
+	}
+}
+
+func TestCheckRejectsIncompleteStandaloneAssets(t *testing.T) {
+	payload := `{"tag_name":"v1.2.0","html_url":"https://example.test/v1.2.0","immutable":true,"assets":[{"name":"checksums.txt"}]}`
+	server := releaseServer(t, payload)
+	defer server.Close()
+	client := &Client{
+		HTTPClient: server.Client(), APIBase: server.URL,
+		Executable:   func() (string, error) { return "/opt/tele/bin/tele", nil },
+		EvalSymlinks: func(path string) (string, error) { return path, nil },
+		GoEnv:        func(context.Context, string) (string, error) { return "/go/bin", nil },
+	}
+	result, err := client.Check(context.Background(), "1.1.0", "abcdef0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.UpdateSupported || !strings.Contains(result.UnsupportedReason, "no matching archive") || result.RecommendedCommand != "gh release view v1.2.0 --repo "+Repository {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestCheckReportsUnavailableExecutableWithoutInventingAPath(t *testing.T) {
+	server := releaseServer(t, releasePayload("v1.2.0"))
+	defer server.Close()
+	client := &Client{
+		HTTPClient: server.Client(), APIBase: server.URL,
+		Executable: func() (string, error) { return "", errors.New("unavailable") },
+	}
+	result, err := client.Check(context.Background(), "1.1.0", "abcdef0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExecutablePath != "" || result.ResolvedPath != "" || result.InstallManager != "unknown" || result.UpdateSupported {
+		t.Fatalf("result = %+v", result)
 	}
 }
 

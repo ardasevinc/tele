@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"os"
@@ -272,6 +273,30 @@ func TestVaultHeaderLayout(t *testing.T) {
 	}
 }
 
+func TestVaultV1CompatibilityVector(t *testing.T) {
+	const fixture = "VEVMRVZMVAAAAQEBAQCONMLInCBMtK5m5j7g875QICEiIyQlJicoKSorLC0uLwABAAAAAAADAQAAADAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR7IWGPKPd4MVWgGiipL/tx+8yhCOBlmY78t1PFEhIWnnajq4OxFFj3Ns6I480OdIIgABAAAAAAAAAAFISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8AAAB9yZx/o+SHIi+BkfzOZAO4ZNn19kNFTXdFZbh9xVUyeW4CeldDz/3VhjuN9rE54IshxDKbmTK/JEIG8BzFLKQ4XsTGV5ISqWh3VtJCbk+HlD8azdY1QjzzlOhV1cFV8bFH18ltIaHJDVRkjpGUJQm4FISfgMGdS7Rqtv6OmUc="
+	encoded, err := base64.StdEncoding.DecodeString(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(secureTempDir(t), testVaultInstance+".vault")
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenVault(path, "main", testVaultInstance, []byte("compatibility passphrase"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	snapshot, err := store.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot) != 0 {
+		t.Fatalf("fixture snapshot = %#v", snapshot)
+	}
+}
+
 func TestVaultDiagnosticsExposeMetadataNotValues(t *testing.T) {
 	path, passphrase := createTestVault(t)
 	store, err := OpenVault(path, "main", testVaultInstance, passphrase)
@@ -311,6 +336,28 @@ func TestReadPassphraseFileRejectsUnsafeMode(t *testing.T) {
 	}
 }
 
+func TestReadPassphraseFileRejectsSymlinkAndOversize(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "credential")
+	if err := os.WriteFile(target, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "credential-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadPassphraseFile(link); err == nil {
+		t.Fatal("symlinked passphrase file was accepted")
+	}
+	oversized := filepath.Join(dir, "oversized")
+	if err := os.WriteFile(oversized, bytes.Repeat([]byte{'x'}, MaxPassphraseSize+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadPassphraseFile(oversized); err == nil {
+		t.Fatal("oversized passphrase file was accepted")
+	}
+}
+
 func TestReadPassphraseFDClosesDescriptor(t *testing.T) {
 	read, write, err := os.Pipe()
 	if err != nil {
@@ -329,6 +376,26 @@ func TestReadPassphraseFDClosesDescriptor(t *testing.T) {
 	if _, err := read.Read(make([]byte, 1)); err == nil {
 		t.Fatal("passphrase descriptor remained open")
 	}
+}
+
+func FuzzVaultHeaderParsing(f *testing.F) {
+	f.Add([]byte("TELEVAULT"))
+	f.Add(make([]byte, vaultHeaderSize))
+	instanceID, err := parseUUID(testVaultInstance)
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = parseVaultHeader(data, instanceID)
+	})
+}
+
+func FuzzRejectDuplicateJSONKeys(f *testing.F) {
+	f.Add([]byte(`{"schema":1,"records":{}}`))
+	f.Add([]byte(`{"schema":1,"schema":1}`))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_ = rejectDuplicateJSONKeys(data)
+	})
 }
 
 func createTestVault(t *testing.T) (string, []byte) {

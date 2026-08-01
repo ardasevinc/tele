@@ -3,7 +3,6 @@
 package secrets
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -33,27 +32,24 @@ func (securityCLIKeychain) Replace(ctx context.Context, account string, value []
 
 func writeSecurityItem(ctx context.Context, account string, value []byte, replace bool) error {
 	encoded := nativeValuePrefix + base64.StdEncoding.EncodeToString(value)
-	update := ""
+	args := []string{"add-generic-password", "-s", nativeKeychainService, "-a", account}
 	if replace {
-		update = " -U"
+		args = append(args, "-U")
 	}
-	command := fmt.Sprintf("add-generic-password%s -s %s -a %s -w %s\n", update, securityQuote(nativeKeychainService), securityQuote(account), securityQuote(encoded))
-	cmd := exec.CommandContext(ctx, "/usr/bin/security", "-i")
-	cmd.Stdin = strings.NewReader(command)
-	var stderr bytes.Buffer
-	cmd.Stdout = &bytes.Buffer{}
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	// A trailing -w makes security read the password from stdin. This avoids
+	// exposing it through argv and bypasses the interactive command parser's
+	// small line buffer.
+	args = append(args, "-w")
+	cmd := exec.CommandContext(ctx, "/usr/bin/security", args...)
+	cmd.Stdin = strings.NewReader(encoded + "\n")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return classifySecurityCLIError(err, stderr.String())
+		return classifySecurityCLIError(err, string(output))
 	}
 	return nil
-}
-
-func securityQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func (securityCLIKeychain) Get(ctx context.Context, account string) ([]byte, error) {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -41,6 +42,33 @@ func TestParseTimeFilterDuration(t *testing.T) {
 	want := now.Add(-2 * time.Hour)
 	if !got.Equal(want) {
 		t.Fatalf("parseTimeFilter = %s, want %s", got, want)
+	}
+}
+
+func TestExplicitConfigPathResolvesConfigConflict(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux XDG contract")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configHome := filepath.Join(home, "xdg-config")
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	for _, dir := range []string{filepath.Join(home, ".config", "tele"), filepath.Join(configHome, "tele")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("default_profile = 'main'\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	explicit := filepath.Join(home, "chosen.toml")
+	state := &appState{cfgPath: explicit}
+	paths, conflict, err := state.pathResolution()
+	if err != nil || conflict != nil {
+		t.Fatalf("pathResolution = %+v, %+v, %v", paths, conflict, err)
+	}
+	if paths.Config != explicit {
+		t.Fatalf("Config = %q, want explicit path", paths.Config)
 	}
 }
 

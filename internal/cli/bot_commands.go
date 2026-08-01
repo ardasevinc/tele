@@ -33,9 +33,13 @@ func botListCommand(s *appState) *cobra.Command {
 			if !supported {
 				return fmt.Errorf("managed bot credentials require a supported secret store: %s", backend)
 			}
+			inventory, err := s.botsStore()
+			if err != nil {
+				return err
+			}
 			result, err := botfactory.List(
 				cmd.Context(),
-				s.botsStore(),
+				inventory,
 				s.secrets(),
 				s.profileName(),
 				backend,
@@ -74,9 +78,13 @@ func botInspectCommand(s *appState) *cobra.Command {
 			if !supported {
 				return fmt.Errorf("managed bot credentials require a supported secret store: %s", backend)
 			}
+			inventory, err := s.botsStore()
+			if err != nil {
+				return err
+			}
 			result, err := botfactory.Inspect(
 				cmd.Context(),
-				s.botsStore(),
+				inventory,
 				s.secrets(),
 				s.profileName(),
 				backend,
@@ -124,7 +132,10 @@ func botTokenSyncCommand(s *appState) *cobra.Command {
 			if !supported {
 				return fmt.Errorf("managed bot credentials require a supported secret store: %s", backend)
 			}
-			inventory := s.botsStore()
+			inventory, err := s.botsStore()
+			if err != nil {
+				return err
+			}
 			result, err := botfactory.SyncToken(
 				cmd.Context(),
 				inventory,
@@ -162,7 +173,10 @@ func botTokenRotateCommand(s *appState) *cobra.Command {
 			if !supported {
 				return fmt.Errorf("managed bot credentials require a supported secret store: %s", backend)
 			}
-			inventory := s.botsStore()
+			inventory, err := s.botsStore()
+			if err != nil {
+				return err
+			}
 			result, err := botfactory.RotateToken(
 				cmd.Context(),
 				inventory,
@@ -228,7 +242,10 @@ func botCreateCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			inventory := s.botsStore()
+			inventory, err := s.botsStore()
+			if err != nil {
+				return err
+			}
 			result, err := botfactory.Create(
 				cmd.Context(),
 				s.secrets(),

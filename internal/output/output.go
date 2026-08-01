@@ -12,6 +12,7 @@ import (
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tgerr"
 
+	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/secrets"
 	tgapp "github.com/ardasevinc/tele/internal/telegram"
 )
@@ -231,6 +232,10 @@ func ErrorFrom(err error) ErrorResponse {
 	case errors.Is(err, secrets.ErrMigrationIncomplete):
 		body.Code = "secret_migration_incomplete"
 	}
+	var pathConflict *config.PathConflictError
+	if errors.As(err, &pathConflict) {
+		body.Code = "path_conflict"
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		body.Code = "timeout"
 	} else if errors.Is(err, context.Canceled) {
@@ -273,7 +278,7 @@ func ExitCodeFor(code string) int {
 	switch code {
 	case "invalid_input":
 		return ExitInvalidInput
-	case "not_authorized", "password_required", "missing_api_hash", "missing_api_id", "pending_auth_expired", "pending_auth_invalid",
+	case "not_authorized", "password_required", "missing_api_hash", "missing_api_id", "pending_auth_expired", "pending_auth_invalid", "path_conflict",
 		"secret_backend_unconfigured", "secret_backend_unavailable", "secret_backend_locked", "vault_unlock_failed", "vault_version_unsupported":
 		return ExitAuthOrConfig
 	case "peer_not_found", "secret_not_found":

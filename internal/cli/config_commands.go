@@ -18,14 +18,11 @@ func configCommand(s *appState) *cobra.Command {
 		Use:   "path",
 		Short: "Print config path",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			paths, err := config.DefaultPaths()
+			paths, err := s.paths()
 			if err != nil {
 				return err
 			}
-			path := s.cfgPath
-			if path == "" {
-				path = paths.Config
-			}
+			path := paths.Config
 			return writeValue(s, map[string]string{"config": path}, func(w output.Writer) error {
 				return w.Print(safeHuman(path))
 			})
@@ -92,7 +89,11 @@ func configCommand(s *appState) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				app := tgapp.App{Config: cfg, Profile: profileName, Paths: mustPaths(), Secrets: s.secrets(), In: s.in, Out: s.out, Err: s.err}
+				paths, err := s.paths()
+				if err != nil {
+					return err
+				}
+				app := tgapp.App{Config: cfg, Profile: profileName, Paths: paths, Secrets: s.secrets(), In: s.in, Out: s.out, Err: s.err}
 				if err := app.SetAPIHash(cmd.Context(), hash); err != nil {
 					return err
 				}

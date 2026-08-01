@@ -190,9 +190,9 @@ func (s *appState) telegramApp() (tgapp.App, error) {
 	if err != nil {
 		return tgapp.App{}, err
 	}
-	paths := mustPaths()
-	if s.cfgPath != "" {
-		paths.Config = s.cfgPath
+	paths, err := s.paths()
+	if err != nil {
+		return tgapp.App{}, err
 	}
 	return tgapp.App{
 		Config:         cfg,
@@ -282,7 +282,10 @@ func (s *appState) openSecretStore(ctx context.Context) (secrets.Store, error) {
 		}
 		defer zeroSecret(passphrase)
 	}
-	paths := mustPaths()
+	paths, err := s.paths()
+	if err != nil {
+		return nil, err
+	}
 	return secrets.Open(ctx, selection, secrets.OpenOptions{DataRoot: paths.Data, Profile: profileName, Passphrase: passphrase})
 }
 
@@ -313,11 +316,15 @@ func (s *appState) botCreator() (botfactory.ManagedBotCreator, error) {
 	return app, nil
 }
 
-func (s *appState) botsStore() botstore.Store {
+func (s *appState) botsStore() (botstore.Store, error) {
 	if s.botInventory != nil {
-		return *s.botInventory
+		return *s.botInventory, nil
 	}
-	return botstore.New(mustPaths().Data, s.profileName())
+	paths, err := s.paths()
+	if err != nil {
+		return botstore.Store{}, err
+	}
+	return botstore.New(paths.Data, s.profileName()), nil
 }
 
 func (s *appState) writer() output.Writer {
@@ -600,10 +607,37 @@ func readSecret(in io.Reader, prompt io.Writer, label string) (string, error) {
 	return strings.TrimSpace(value), nil
 }
 
-func mustPaths() config.Paths {
+func (s *appState) paths() (config.Paths, error) {
+	paths, conflict, err := s.pathResolution()
+	if err != nil {
+		return config.Paths{}, err
+	}
+	if conflict != nil {
+		return config.Paths{}, conflict
+	}
+	return paths, nil
+}
+
+func (s *appState) pathResolution() (config.Paths, *config.PathConflictError, error) {
 	paths, err := config.DefaultPaths()
 	if err != nil {
-		return config.Paths{}
+		var conflict *config.PathConflictError
+		if !errors.As(err, &conflict) {
+			return config.Paths{}, nil, err
+		}
+		paths = conflict.Preferred
+		remaining := make([]config.PathConflict, 0, len(conflict.Conflicts))
+		for _, item := range conflict.Conflicts {
+			if s.cfgPath == "" || item.Kind != "config" {
+				remaining = append(remaining, item)
+			}
+		}
+		if len(remaining) > 0 {
+			return paths, &config.PathConflictError{Preferred: paths, Conflicts: remaining}, nil
+		}
 	}
-	return paths
+	if s.cfgPath != "" {
+		paths.Config = s.cfgPath
+	}
+	return paths, nil, nil
 }

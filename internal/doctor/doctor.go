@@ -45,6 +45,7 @@ type Report struct {
 
 type Options struct {
 	Paths                  config.Paths
+	PathConflict           *config.PathConflictError
 	Profile                string
 	Secrets                secrets.Store
 	SecretBackend          string
@@ -77,6 +78,20 @@ func Run(ctx context.Context, opts Options) Report {
 	if report.InstalledPath == "" {
 		report.InstalledPath, _ = exec.LookPath("tele")
 		report.InstalledPath = cleanPath(report.InstalledPath)
+	}
+	if opts.PathConflict != nil {
+		report.Profile = opts.Profile
+		if report.Profile == "" {
+			report.Profile = config.DefaultProfile
+		}
+		details := make(map[string]any, len(opts.PathConflict.Conflicts)*2)
+		for _, conflict := range opts.PathConflict.Conflicts {
+			details[conflict.Kind+"_legacy"] = conflict.Legacy
+			details[conflict.Kind+"_xdg"] = conflict.XDG
+		}
+		report.add("paths", Fail, "legacy and XDG state require explicit reconciliation", details)
+		report.OK = false
+		return report
 	}
 
 	cfg, configReady := inspectConfig(opts.Paths.Config, &report)

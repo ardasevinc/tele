@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ardasevinc/tele/internal/buildinfo"
-	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/doctor"
 	"github.com/ardasevinc/tele/internal/output"
 )
@@ -21,17 +20,15 @@ func doctorCommand(s *appState) *cobra.Command {
 		Short: "Check local tele readiness",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			paths, err := config.DefaultPaths()
+			paths, pathConflict, err := s.pathResolution()
 			if err != nil {
 				return err
-			}
-			if s.cfgPath != "" {
-				paths.Config = s.cfgPath
 			}
 			backend, supported := s.secretBackendInfo()
 			backendID, backendInstance := s.secretBackendSelection()
 			report := doctor.Run(cmd.Context(), doctor.Options{
 				Paths:                  paths,
+				PathConflict:           pathConflict,
 				Profile:                s.profile,
 				Secrets:                s.secrets(),
 				SecretBackend:          backend,

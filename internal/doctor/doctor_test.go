@@ -111,6 +111,24 @@ func TestRunReportsReadyLocalStateWithoutLiveAccess(t *testing.T) {
 	}
 }
 
+func TestRunStopsBeforeStateAccessOnPathConflict(t *testing.T) {
+	preferred := config.Paths{Config: "/xdg/config/tele/config.toml", Data: "/xdg/data/tele"}
+	report := Run(context.Background(), Options{
+		Paths: preferred,
+		PathConflict: &config.PathConflictError{Preferred: preferred, Conflicts: []config.PathConflict{{
+			Kind: "config", Legacy: "/legacy/config/tele", XDG: "/xdg/config/tele",
+		}}},
+		Version: "test", Commit: "abc123",
+	})
+	if report.OK || len(report.Checks) != 1 {
+		t.Fatalf("path-conflict report = %+v", report)
+	}
+	check := checkNamed(t, report, "paths")
+	if check.Status != Fail || check.Details["config_legacy"] != "/legacy/config/tele" {
+		t.Fatalf("path check = %+v", check)
+	}
+}
+
 func TestRunReportsPortableVaultMetadataWithoutSecretValues(t *testing.T) {
 	fx := validFixture(t)
 	const instance = "8e34c2c8-9c20-4cb4-ae66-e63ee0f3be50"

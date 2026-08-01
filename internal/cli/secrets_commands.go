@@ -163,7 +163,10 @@ func (s *appState) initVault(ctx context.Context) (secretInitResult, error) {
 	if err != nil {
 		return secretInitResult{}, err
 	}
-	paths := mustPaths()
+	paths, err := s.paths()
+	if err != nil {
+		return secretInitResult{}, err
+	}
 	vaultPath := secrets.VaultPath(paths.Data, profileName, instance)
 	result := secretInitResult{Backend: secrets.BackendVault, Instance: instance, Profile: profileName}
 	err = secrets.WithProfileLock(ctx, paths.Data, profileName, func(ctx context.Context) error {
@@ -218,7 +221,10 @@ func (s *appState) initSecretService(ctx context.Context) (secretInitResult, err
 	if err != nil {
 		return secretInitResult{}, err
 	}
-	paths := mustPaths()
+	paths, err := s.paths()
+	if err != nil {
+		return secretInitResult{}, err
+	}
 	result := secretInitResult{Backend: secrets.BackendSecretService, Instance: instance, Profile: profileName}
 	err = secrets.WithProfileLock(ctx, paths.Data, profileName, func(ctx context.Context) error {
 		latest, err := s.loadConfig()
@@ -280,7 +286,10 @@ func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.Bac
 		}
 		defer zeroSecret(passphrase)
 	}
-	paths := mustPaths()
+	paths, err := s.paths()
+	if err != nil {
+		return migrationReceipt{}, err
+	}
 	var receipt migrationReceipt
 	err = secrets.WithProfileLock(ctx, paths.Data, profileName, func(ctx context.Context) error {
 		latest, err := s.loadConfig()
@@ -389,7 +398,10 @@ func (s *appState) purgeVault(ctx context.Context, instance, confirmation string
 	if err != nil {
 		return purgeResult{}, err
 	}
-	paths := mustPaths()
+	paths, err := s.paths()
+	if err != nil {
+		return purgeResult{}, err
+	}
 	path := secrets.VaultPath(paths.Data, profileName, instance)
 	result := purgeResult{Profile: profileName, Backend: secrets.BackendVault, Instance: instance, Path: path}
 	if profile.Secrets != nil && profile.Secrets.Backend == string(secrets.BackendVault) && profile.Secrets.Instance == instance {
@@ -438,7 +450,10 @@ func (s *appState) purgeSecretService(ctx context.Context, instance, confirmatio
 	if err != nil {
 		return purgeResult{}, err
 	}
-	paths := mustPaths()
+	paths, err := s.paths()
+	if err != nil {
+		return purgeResult{}, err
+	}
 	result := purgeResult{
 		Profile: profileName, Backend: secrets.BackendSecretService, Instance: instance,
 		Path: "secret-service://" + profileName + "/" + instance,

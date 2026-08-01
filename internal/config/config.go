@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 
@@ -37,32 +38,117 @@ type SecretBackend struct {
 }
 
 type Paths struct {
-	Config string
-	Data   string
+	Config  string
+	Data    string
+	Runtime string
+}
+
+type PathConflict struct {
+	Kind   string
+	Legacy string
+	XDG    string
+}
+
+type PathConflictError struct {
+	Preferred Paths
+	Conflicts []PathConflict
+}
+
+func (e *PathConflictError) Error() string {
+	parts := make([]string, 0, len(e.Conflicts))
+	for _, conflict := range e.Conflicts {
+		parts = append(parts, fmt.Sprintf("%s exists in both %s and %s", conflict.Kind, conflict.Legacy, conflict.XDG))
+	}
+	return "legacy and XDG Tele state conflict: " + strings.Join(parts, "; ") + "; move one copy aside or unset the matching XDG variable"
 }
 
 func DefaultPaths() (Paths, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return Paths{}, err
+	}
+	if runtime.GOOS == "linux" {
+		return resolveLinuxPaths(home, os.Getenv("XDG_CONFIG_HOME"), os.Getenv("XDG_DATA_HOME"), os.Getenv("XDG_RUNTIME_DIR"))
+	}
 	cfg, err := os.UserConfigDir()
 	if err != nil {
 		return Paths{}, err
 	}
-	dataRoot := ""
-	if runtime.GOOS == "linux" {
-		if candidate := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(candidate) {
-			dataRoot = candidate
-		}
+	return Paths{Config: filepath.Join(cfg, "tele", "config.toml"), Data: filepath.Join(home, ".local", "share", "tele")}, nil
+}
+
+func resolveLinuxPaths(home, configHome, dataHome, runtimeDir string) (Paths, error) {
+	legacy := Paths{
+		Config: filepath.Join(home, ".config", "tele", "config.toml"),
+		Data:   filepath.Join(home, ".local", "share", "tele"),
 	}
-	if dataRoot == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return Paths{}, err
-		}
-		dataRoot = filepath.Join(home, ".local", "share")
+	preferred := legacy
+	if filepath.IsAbs(configHome) {
+		preferred.Config = filepath.Join(configHome, "tele", "config.toml")
 	}
-	return Paths{
-		Config: filepath.Join(cfg, "tele", "config.toml"),
-		Data:   filepath.Join(dataRoot, "tele"),
-	}, nil
+	if filepath.IsAbs(dataHome) {
+		preferred.Data = filepath.Join(dataHome, "tele")
+	}
+	if filepath.IsAbs(runtimeDir) {
+		preferred.Runtime = filepath.Join(runtimeDir, "tele")
+	}
+
+	selected := preferred
+	var conflicts []PathConflict
+	configPath, conflict, err := chooseStatePath("config", filepath.Dir(legacy.Config), filepath.Dir(preferred.Config))
+	if err != nil {
+		return Paths{}, err
+	}
+	if conflict != nil {
+		conflicts = append(conflicts, *conflict)
+	} else {
+		selected.Config = filepath.Join(configPath, "config.toml")
+	}
+	dataPath, conflict, err := chooseStatePath("data", legacy.Data, preferred.Data)
+	if err != nil {
+		return Paths{}, err
+	}
+	if conflict != nil {
+		conflicts = append(conflicts, *conflict)
+	} else {
+		selected.Data = dataPath
+	}
+	if len(conflicts) > 0 {
+		return Paths{}, &PathConflictError{Preferred: preferred, Conflicts: conflicts}
+	}
+	return selected, nil
+}
+
+func chooseStatePath(kind, legacy, xdg string) (string, *PathConflict, error) {
+	if filepath.Clean(legacy) == filepath.Clean(xdg) {
+		return xdg, nil, nil
+	}
+	legacyPresent, err := directoryHasState(legacy)
+	if err != nil {
+		return "", nil, err
+	}
+	xdgPresent, err := directoryHasState(xdg)
+	if err != nil {
+		return "", nil, err
+	}
+	if legacyPresent && xdgPresent {
+		return "", &PathConflict{Kind: kind, Legacy: legacy, XDG: xdg}, nil
+	}
+	if legacyPresent {
+		return legacy, nil, nil
+	}
+	return xdg, nil, nil
+}
+
+func directoryHasState(path string) (bool, error) {
+	entries, err := os.ReadDir(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return len(entries) > 0, nil
 }
 
 func Load(path string) (Config, error) {

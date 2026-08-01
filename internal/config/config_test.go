@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,7 +29,9 @@ func TestDefaultPathsRespectsXDGDataHomeOnLinux(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux XDG contract")
 	}
-	dataHome := filepath.Join(t.TempDir(), "data")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dataHome := filepath.Join(home, "data")
 	t.Setenv("XDG_DATA_HOME", dataHome)
 	paths, err := DefaultPaths()
 	if err != nil {
@@ -43,6 +46,8 @@ func TestDefaultPathsIgnoresRelativeXDGDataHome(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux XDG contract")
 	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", "relative")
 	paths, err := DefaultPaths()
 	if err != nil {
@@ -50,6 +55,80 @@ func TestDefaultPathsIgnoresRelativeXDGDataHome(t *testing.T) {
 	}
 	if strings.Contains(paths.Data, "relative") {
 		t.Fatalf("relative XDG_DATA_HOME was accepted: %q", paths.Data)
+	}
+}
+
+func TestDefaultPathsPreservesLegacyLinuxState(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux XDG contract")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "xdg-data"))
+	legacyConfigDir := filepath.Join(home, ".config", "tele")
+	legacyDataDir := filepath.Join(home, ".local", "share", "tele")
+	if err := os.MkdirAll(legacyConfigDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyConfigDir, "config.toml"), []byte("default_profile = 'main'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(legacyDataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDataDir, "state"), []byte("state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths.Config != filepath.Join(legacyConfigDir, "config.toml") || paths.Data != legacyDataDir {
+		t.Fatalf("paths = %+v, want preserved legacy roots", paths)
+	}
+}
+
+func TestDefaultPathsRejectsLegacyXDGConflict(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux XDG contract")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configHome := filepath.Join(home, "xdg-config")
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	for _, dir := range []string{filepath.Join(home, ".config", "tele"), filepath.Join(configHome, "tele")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("default_profile = 'main'\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := DefaultPaths()
+	var conflict *PathConflictError
+	if !errors.As(err, &conflict) || len(conflict.Conflicts) != 1 || conflict.Conflicts[0].Kind != "config" {
+		t.Fatalf("DefaultPaths error = %#v", err)
+	}
+	if !strings.Contains(err.Error(), "move one copy aside") {
+		t.Fatalf("conflict lacks reconciliation instructions: %v", err)
+	}
+}
+
+func TestDefaultPathsExposesAbsoluteRuntimeDir(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux XDG contract")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	runtimeDir := filepath.Join(home, "runtime")
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	paths, err := DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths.Runtime != filepath.Join(runtimeDir, "tele") {
+		t.Fatalf("Runtime = %q", paths.Runtime)
 	}
 }
 

@@ -3,9 +3,10 @@
 Releases are built from tags by `.github/workflows/release.yml`. The workflow
 validates that the source version equals the tag, the tagged commit is on
 `main`, CI passed for that exact commit, two clean builds are byte-identical,
-checksums verify, and the Linux binary reports the tagged version and commit.
-It then attests every artifact and publishes only after the uploaded asset set
-matches the local set.
+checksums verify, and the packaged Linux binary is statically linked and runs
+both on the CI host and inside a networkless read-only Alpine container. It then
+attests every artifact and publishes only after the uploaded asset set matches
+the local set.
 
 ## Prepare
 
@@ -36,12 +37,17 @@ checksums, attestations, prerelease classification, and publication.
 ```sh
 gh release view "v$version" --json url,isDraft,isPrerelease,assets
 gh release download "v$version" --pattern checksums.txt --pattern 'tele_*.tar.gz'
+gh attestation verify checksums.txt --repo ardasevinc/tele
 gh attestation verify "tele_${version}_darwin_arm64.tar.gz" --repo ardasevinc/tele
+tele update --check --json
 ```
 
 Verify Homebrew only after the release assets exist and the tap formula has the
 new SHA-256 values. Do not publish a formula that points at mutable or missing
-assets.
+assets. After the tap update, verify `brew upgrade tele`, `tele --version`, and
+`tele update --check`. Verify a pinned `go install` in a clean temporary
+`GOBIN`, then exercise `tele update --yes` from the preceding stable tag and
+confirm that it reports the newly published version.
 
 ## Rollback
 

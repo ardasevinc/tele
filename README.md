@@ -20,14 +20,14 @@ contracts; urgent safety fixes may narrow behavior that cannot remain safe.
 
 | Platform | Status | Secret storage |
 | --- | --- | --- |
-| macOS arm64/amd64 | supported | macOS Keychain |
-| Linux arm64/amd64 | preview build only | not implemented yet |
+| macOS arm64/amd64 | supported | native macOS Keychain or portable vault |
+| Linux arm64/amd64 | supported | Secret Service or portable vault |
 | Windows amd64 | compile-smoke only | not implemented |
 
-On macOS, API hashes, the session-encryption key, manager-bot credentials, and
-managed child-bot tokens are stored in Keychain; encrypted MTProto session bytes
-live under the profile data directory. tele does not fall back to plaintext
-secrets on unsupported platforms.
+API hashes, session-encryption keys, manager-bot credentials, and managed
+child-bot tokens are stored in the selected profile backend. Encrypted MTProto
+session bytes live under the profile data directory. Backend choice is explicit
+and sticky; tele never silently falls back to plaintext or another backend.
 
 ## Install
 
@@ -50,9 +50,10 @@ macOS arm64 example requires the GitHub CLI:
   cd "$tmp"
   gh release download "v$version" --repo ardasevinc/tele \
     --pattern checksums.txt --pattern "$asset"
+  gh attestation verify checksums.txt --repo ardasevinc/tele
+  gh attestation verify "$asset" --repo ardasevinc/tele
   grep -F "  $asset" checksums.txt >"$asset.sha256"
   shasum -a 256 -c "$asset.sha256"
-  gh attestation verify "$asset" --repo ardasevinc/tele
   tar -xzf "$asset"
   printf 'verified tele extracted to: %s\n' "$tmp"
 )
@@ -81,6 +82,7 @@ Create an app at <https://my.telegram.org/apps>, then configure a profile:
 ```sh
 tele profiles use test
 tele config set api-id 123456
+tele secrets init --backend vault-v1
 tele config set api-hash
 TELE_PHONE=+15555550123 tele auth start --phone-env TELE_PHONE
 read -rs TELE_CODE && export TELE_CODE
@@ -89,6 +91,17 @@ unset TELE_CODE
 tele auth status
 tele chats --limit 20
 ```
+
+The portable `vault-v1` backend works on every supported macOS and Linux
+target. Interactive use prompts twice on the controlling TTY. Automation must
+provide a protected regular file with `--vault-passphrase-file` or an inherited
+descriptor numbered 3 or higher with `--vault-passphrase-fd`; passphrases are
+never accepted through argv or environment variables.
+
+Linux desktops with a running, unlocked Secret Service provider may instead
+initialize `secret-service-v1`. macOS users may choose `keychain-v1`. If a
+provider is missing, headless, or locked, tele returns a typed backend error
+rather than switching storage behind your back.
 
 For one-shot interactive login, `tele auth login` still works.
 
@@ -135,8 +148,10 @@ not assigned fabricated manager or token state. Telegram exposes no matching
 remote deletion operation here, so Tele does not claim one.
 
 `bots list` reads the reconciled local inventory. It lives at
-`~/.local/share/tele/<profile>/bots.json`, uses private atomic writes, and
-contains bot identity and reconciliation metadata but no tokens.
+the profile's data path, normally
+`$XDG_DATA_HOME/tele/<profile>/bots.json` on Linux and
+`~/.local/share/tele/<profile>/bots.json` on macOS. It uses private atomic
+writes and contains bot identity and reconciliation metadata but no tokens.
 
 Synchronize the current remote token non-destructively, or explicitly rotate it:
 
@@ -147,7 +162,7 @@ tele bots token rotate @ExampleWorkerBot --yes
 
 Ordinary output never returns manager or child tokens. Creation stores a durable
 inventory receipt before requesting the child token, then escrows the token in
-Keychain. Post-dispatch ambiguity and failures after confirmed creation or
+the selected secret backend. Post-dispatch ambiguity and failures after confirmed creation or
 rotation exit with code `7` and a reconciliation handle. Do not retry those
 operations blindly; use inventory inspection or non-destructive token sync
 first.
@@ -215,7 +230,8 @@ cancellation errors are structured as `timeout` and `canceled`.
 `tele doctor` performs aggregated read-only local checks and returns `{ ok,
 checks }` instead of stopping at the first problem. It checks config parsing and
 permissions, profile/API-ID readiness, secret-store support, API-hash and session
-key availability, session decryption, peer-cache parsing and permissions, and
+key availability, vault structure and catalog authority, retained migration
+receipts, session decryption, peer-cache parsing and permissions, and
 running-vs-installed binary path drift. Each check is `pass`, `warning`,
 `failed`, or `skipped`.
 
@@ -242,8 +258,26 @@ downloads neither replace an existing destination nor leave partial files.
 
 On macOS the config follows `os.UserConfigDir`, normally
 `~/Library/Application Support/tele/config.toml`; profile data lives under
-`~/.local/share/tele/<profile>/`. Other platforms use their Go-native user config
-directory, but v1 secret storage remains macOS Keychain-only.
+`~/.local/share/tele/<profile>/`. Linux follows the XDG Base Directory contract:
+config under `$XDG_CONFIG_HOME/tele` and profile data under
+`$XDG_DATA_HOME/tele`, with the standard `~/.config` and `~/.local/share`
+defaults. Existing legacy Linux state is preserved when unambiguous; conflicting
+legacy and XDG copies are rejected for explicit reconciliation.
+
+## Updates
+
+`tele update --check` queries GitHub's latest immutable stable release and
+reports the running version, source provenance, resolved executable, detected
+install manager, and an exact recommendation. Add `--json` for the stable
+machine result. This command is read-only.
+
+`tele update --yes` mutates only an unambiguous, writable Go installation and
+pins the exact release tag before verifying the installed binary's version.
+Homebrew installations receive `brew upgrade tele`. Standalone archives remain
+check-only until tele can natively verify GitHub attestations, so the reported
+manual command verifies both `checksums.txt` and the selected archive before
+checking its digest. Development, dirty, prerelease, and unknown-provenance
+builds are always check-only.
 
 ## Untrusted content
 
@@ -281,8 +315,9 @@ are returned unchanged.
 ## Development and releases
 
 `just gate` runs formatting, tests, race detection, vet, staticcheck,
-golangci-lint, gosec, govulncheck, module verification, macOS/Linux/Windows
-builds, and diff checks. CI runs the reproducible credential-free subset.
+golangci-lint, gosec, govulncheck, module verification, supported macOS/Linux
+builds, a Windows compile smoke, and diff checks. CI adds real Secret Service
+and Keychain lifecycle tests plus packaged static-Linux runtime smoke tests.
 
 Release archives are deterministic, checksummed, and provenance-attested. See
 [`docs/releasing.md`](docs/releasing.md) for the tag and verification contract,

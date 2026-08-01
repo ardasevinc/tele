@@ -161,7 +161,7 @@ func (s *appState) initVault(ctx context.Context) (secretInitResult, error) {
 	if profile.Secrets != nil {
 		return secretInitResult{}, fmt.Errorf("profile %q already selects secret backend %q", profileName, profile.Secrets.Backend)
 	}
-	passphrase, err := s.readVaultPassphrase(true)
+	passphrase, err := s.readVaultPassphrase(ctx, true)
 	if err != nil {
 		return secretInitResult{}, err
 	}
@@ -346,7 +346,7 @@ func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.Bac
 	var passphrase []byte
 	sourceBackend := sourceSelection.Backend
 	if sourceBackend == secrets.BackendVault || targetBackend == secrets.BackendVault {
-		passphrase, err = s.readVaultPassphrase(false)
+		passphrase, err = s.readVaultPassphrase(ctx, false)
 		if err != nil {
 			return migrationReceipt{}, err
 		}
@@ -710,7 +710,7 @@ func zeroSnapshot(snapshot map[string][]byte) {
 	}
 }
 
-func (s *appState) readVaultPassphrase(confirm bool) ([]byte, error) {
+func (s *appState) readVaultPassphrase(ctx context.Context, confirm bool) ([]byte, error) {
 	sources := 0
 	if s.vaultPassphraseFD >= 0 {
 		sources++
@@ -730,10 +730,10 @@ func (s *appState) readVaultPassphrase(confirm bool) ([]byte, error) {
 	if s.json || s.jsonl {
 		return nil, fmt.Errorf("vault passphrase source required in machine-output mode")
 	}
-	return readVaultPassphraseTTY(confirm)
+	return readVaultPassphraseTTY(ctx, confirm)
 }
 
-func readVaultPassphraseTTY(confirm bool) ([]byte, error) {
+func readVaultPassphraseTTY(ctx context.Context, confirm bool) ([]byte, error) {
 	// #nosec G304 -- /dev/tty is the controlling terminal, never redirected stdin.
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
@@ -748,14 +748,14 @@ func readVaultPassphraseTTY(confirm bool) ([]byte, error) {
 			return nil, err
 		}
 	}
-	first, err := readHiddenTTY(tty, "vault passphrase: ")
+	first, err := readHiddenTTY(ctx, tty, "vault passphrase: ")
 	if err != nil {
 		return nil, err
 	}
 	if !confirm {
 		return first, nil
 	}
-	second, err := readHiddenTTY(tty, "confirm vault passphrase: ")
+	second, err := readHiddenTTY(ctx, tty, "confirm vault passphrase: ")
 	if err != nil {
 		zeroSecret(first)
 		return nil, err
@@ -768,11 +768,11 @@ func readVaultPassphraseTTY(confirm bool) ([]byte, error) {
 	return first, nil
 }
 
-func readHiddenTTY(tty *os.File, label string) ([]byte, error) {
+func readHiddenTTY(ctx context.Context, tty *os.File, label string) ([]byte, error) {
 	if _, err := fmt.Fprint(tty, label); err != nil {
 		return nil, err
 	}
-	value, err := term.ReadPassword(int(tty.Fd()))
+	value, err := readPasswordContext(ctx, int(tty.Fd()))
 	_, _ = fmt.Fprintln(tty)
 	if err != nil {
 		return nil, err

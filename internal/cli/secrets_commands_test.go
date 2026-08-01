@@ -165,14 +165,14 @@ func TestSecretsInitAndAPIHashRoundTripOnLinux(t *testing.T) {
 
 func TestVaultMachineModeRequiresExplicitPassphraseSource(t *testing.T) {
 	state := &appState{json: true, vaultPassphraseFD: -1}
-	if _, err := state.readVaultPassphrase(false); err == nil || !strings.Contains(err.Error(), "source required") {
+	if _, err := state.readVaultPassphrase(context.Background(), false); err == nil || !strings.Contains(err.Error(), "source required") {
 		t.Fatalf("readVaultPassphrase error = %v", err)
 	}
 }
 
 func TestVaultPassphraseSourcesAreMutuallyExclusive(t *testing.T) {
 	state := &appState{vaultPassphraseFD: 3, vaultPassphraseFile: "/tmp/credential"}
-	if _, err := state.readVaultPassphrase(false); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+	if _, err := state.readVaultPassphrase(context.Background(), false); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("readVaultPassphrase error = %v", err)
 	}
 }

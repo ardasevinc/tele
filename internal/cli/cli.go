@@ -281,7 +281,7 @@ func (s *appState) openSecretStore(ctx context.Context) (secrets.Store, error) {
 	}
 	var passphrase []byte
 	if selection.Backend == secrets.BackendVault {
-		passphrase, err = s.readVaultPassphrase(false)
+		passphrase, err = s.readVaultPassphrase(ctx, false)
 		if err != nil {
 			return nil, err
 		}

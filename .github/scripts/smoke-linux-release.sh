@@ -62,7 +62,7 @@ if grep -R -a -F 'TELE_RELEASE_SMOKE_SECRET_7d13' "$smoke_root"; then
   exit 1
 fi
 
-mkdir -m 700 "$smoke_root/notty" "$smoke_root/fd" "$smoke_root/pty"
+mkdir -m 700 "$smoke_root/notty" "$smoke_root/fd" "$smoke_root/pty" "$smoke_root/timeout"
 env HOME="$smoke_root/notty/home" \
   XDG_CONFIG_HOME="$smoke_root/notty/config" \
   XDG_DATA_HOME="$smoke_root/notty/data" \
@@ -101,5 +101,24 @@ env HOME="$smoke_root/pty/home" \
 grep -F 'initialized vault-v1 for profile pty' "$smoke_root/pty-output" >/dev/null
 if grep -F 'pty smoke passphrase' "$smoke_root/pty-output"; then
   echo "PTY passphrase was echoed" >&2
+  exit 1
+fi
+
+env HOME="$smoke_root/timeout/home" \
+  XDG_CONFIG_HOME="$smoke_root/timeout/config" \
+  XDG_DATA_HOME="$smoke_root/timeout/data" \
+  "$binary_dir/tele" profiles use timeout >/dev/null
+set +e
+{
+  sleep 1
+} | timeout 3 script -qec \
+  "env HOME='$smoke_root/timeout/home' XDG_CONFIG_HOME='$smoke_root/timeout/config' XDG_DATA_HOME='$smoke_root/timeout/data' '$binary_dir/tele' --timeout=100ms secrets init --backend vault-v1" \
+  /dev/null >"$smoke_root/timeout-output" 2>&1
+timeout_status=$?
+set -e
+test "$timeout_status" -ne 0
+grep -F 'context deadline exceeded' "$smoke_root/timeout-output" >/dev/null
+if find "$smoke_root/timeout" -name '*.vault' -print -quit | grep -q .; then
+  echo "timed-out vault prompt created a vault" >&2
   exit 1
 fi

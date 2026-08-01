@@ -144,7 +144,10 @@ func (s *NativeKeychainStore) Set(ctx context.Context, profile, key string, valu
 			return s.backendError(err)
 		}
 		readback, err := s.readPhysical(ctx, physicalID)
-		if err != nil || !bytes.Equal(readback, value) {
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(readback, value) {
 			zeroBytes(readback)
 			return &BackendError{Kind: ErrMigrationIncomplete, Backend: BackendKeychain, Detail: "physical item readback failed"}
 		}
@@ -228,7 +231,7 @@ func (s *NativeKeychainStore) Snapshot(ctx context.Context) (map[string][]byte, 
 			value, err := s.readPhysical(ctx, manifest.Mappings[key])
 			if err != nil {
 				zeroSnapshotValues(snapshot)
-				return &BackendError{Kind: ErrCatalogIncomplete, Backend: BackendKeychain, Detail: "manifest item is unreadable"}
+				return err
 			}
 			snapshot[key] = value
 		}
@@ -248,6 +251,9 @@ func (s *NativeKeychainStore) CatalogDiagnostics(ctx context.Context) (CatalogDi
 		for _, physicalID := range manifest.Mappings {
 			value, err := s.api.Get(ctx, s.physicalAccount(physicalID))
 			if err != nil {
+				if !errors.Is(err, ErrNotFound) {
+					return s.backendError(err)
+				}
 				return &BackendError{Kind: ErrCatalogIncomplete, Backend: BackendKeychain, Detail: "mapped physical item is missing or unreadable"}
 			}
 			zeroBytes(value)
@@ -300,7 +306,10 @@ func (s *NativeKeychainStore) initialize(ctx context.Context) error {
 			}
 		}()
 		value, err := s.api.Get(ctx, account)
-		if err != nil || !bytes.Equal(value, first) {
+		if err != nil {
+			return s.backendError(err)
+		}
+		if !bytes.Equal(value, first) {
 			zeroBytes(value)
 			return &BackendError{Kind: ErrBackendUnavailable, Backend: BackendKeychain, Detail: "sentinel read failed"}
 		}
@@ -310,7 +319,10 @@ func (s *NativeKeychainStore) initialize(ctx context.Context) error {
 			return s.backendError(err)
 		}
 		value, err = s.api.Get(ctx, account)
-		if err != nil || !bytes.Equal(value, second) {
+		if err != nil {
+			return s.backendError(err)
+		}
+		if !bytes.Equal(value, second) {
 			zeroBytes(value)
 			return &BackendError{Kind: ErrBackendUnavailable, Backend: BackendKeychain, Detail: "sentinel replace readback failed"}
 		}
@@ -362,7 +374,10 @@ func (s *NativeKeychainStore) writeManifest(ctx context.Context, manifest keycha
 		return s.backendError(err)
 	}
 	readback, err := s.loadManifest(ctx)
-	if err != nil || readback.Generation != manifest.Generation || !equalStringMap(readback.Mappings, manifest.Mappings) || !equalStrings(readback.Garbage, manifest.Garbage) {
+	if err != nil {
+		return err
+	}
+	if readback.Generation != manifest.Generation || !equalStringMap(readback.Mappings, manifest.Mappings) || !equalStrings(readback.Garbage, manifest.Garbage) {
 		return &BackendError{Kind: ErrCatalogIncomplete, Backend: BackendKeychain, Detail: "manifest readback verification failed"}
 	}
 	return nil

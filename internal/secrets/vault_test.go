@@ -7,10 +7,18 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
+)
+
+const (
+	vaultProcessWriterEnv     = "TELE_TEST_VAULT_PROCESS_WRITER"
+	vaultProcessWriterPathEnv = "TELE_TEST_VAULT_PROCESS_WRITER_PATH"
+	vaultProcessWriterIDEnv   = "TELE_TEST_VAULT_PROCESS_WRITER_ID"
 )
 
 const testVaultInstance = "8e34c2c8-9c20-4cb4-ae66-e63ee0f3be50"
@@ -222,6 +230,70 @@ func TestVaultConcurrentWritersPreserveAllRecords(t *testing.T) {
 	}
 	if len(snapshot) != writers {
 		t.Fatalf("record count = %d, want %d", len(snapshot), writers)
+	}
+}
+
+func TestVaultSeparateProcessWritersPreserveAllRecords(t *testing.T) {
+	if child := os.Getenv(vaultProcessWriterEnv); child != "" {
+		path := os.Getenv(vaultProcessWriterPathEnv)
+		writerID := os.Getenv(vaultProcessWriterIDEnv)
+		if path == "" || writerID == "" {
+			t.Fatal("invalid child parameters")
+		}
+		store, err := OpenVault(path, "main", testVaultInstance, []byte("process writer passphrase"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		for i := 0; i < 8; i++ {
+			key := fmt.Sprintf("%s-%d", writerID, i)
+			if err := store.Set(context.Background(), "main", key, []byte(key)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return
+	}
+
+	path := filepath.Join(t.TempDir(), "vault")
+	store, err := CreateVault(context.Background(), path, "main", testVaultInstance, []byte("process writer passphrase"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	commands := make([]*exec.Cmd, 3)
+	outputs := make([]bytes.Buffer, len(commands))
+	for i := range commands {
+		child := exec.Command(os.Args[0], "-test.run=^TestVaultSeparateProcessWritersPreserveAllRecords$")
+		child.Env = append(os.Environ(),
+			vaultProcessWriterEnv+"=1",
+			vaultProcessWriterPathEnv+"="+path,
+			vaultProcessWriterIDEnv+"="+fmt.Sprintf("writer-%d", i),
+		)
+		child.Stdout = &outputs[i]
+		child.Stderr = &outputs[i]
+		commands[i] = child
+		if err := child.Start(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, child := range commands {
+		if err := child.Wait(); err != nil {
+			t.Fatalf("child writer failed: %v\n%s", err, outputs[i].Bytes())
+		}
+	}
+
+	store, err = OpenVault(path, "main", testVaultInstance, []byte("process writer passphrase"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	snapshot, err := store.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot) != len(commands)*8 {
+		t.Fatalf("record count = %d, want %d", len(snapshot), len(commands)*8)
 	}
 }
 

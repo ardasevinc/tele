@@ -82,6 +82,77 @@ func TestAtomicReplacePreservesOriginalOnShortWrite(t *testing.T) {
 	}
 }
 
+func TestAtomicReplaceFailureBoundaries(t *testing.T) {
+	injected := errors.New("injected failure")
+	tests := []struct {
+		name            string
+		mutate          func(*atomicReplaceOps)
+		wantReplacement bool
+	}{
+		{
+			name: "file sync",
+			mutate: func(ops *atomicReplaceOps) {
+				ops.syncFile = func(*os.File) error { return injected }
+			},
+		},
+		{
+			name: "rename",
+			mutate: func(ops *atomicReplaceOps) {
+				ops.rename = func(string, string) error { return injected }
+			},
+		},
+		{
+			name: "directory sync",
+			mutate: func(ops *atomicReplaceOps) {
+				ops.syncDir = func(string) error { return injected }
+			},
+			wantReplacement: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "value")
+			if err := os.WriteFile(path, []byte("original"), FileMode); err != nil {
+				t.Fatal(err)
+			}
+			ops := atomicReplaceOps{
+				createTemp: os.CreateTemp,
+				syncFile:   (*os.File).Sync,
+				closeFile:  (*os.File).Close,
+				rename:     os.Rename,
+				syncDir:    syncDir,
+			}
+			tt.mutate(&ops)
+			err := atomicReplaceFile(path, func(file *os.File) error {
+				_, err := file.Write([]byte("replacement"))
+				return err
+			}, ops)
+			if !errors.Is(err, injected) {
+				t.Fatalf("error = %v, want injected failure", err)
+			}
+			got, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			want := "original"
+			if tt.wantReplacement {
+				want = "replacement"
+			}
+			if string(got) != want {
+				t.Fatalf("content = %q, want %q", got, want)
+			}
+			matches, globErr := filepath.Glob(filepath.Join(dir, ".tele-tmp-*"))
+			if globErr != nil {
+				t.Fatal(globErr)
+			}
+			if len(matches) != 0 {
+				t.Fatalf("temporary files remain: %v", matches)
+			}
+		})
+	}
+}
+
 func TestRepairFileTightensExistingModes(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(dir, 0o777); err != nil {

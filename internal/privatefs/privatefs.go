@@ -49,11 +49,29 @@ func AtomicReplace(path string, write func(io.Writer) error) (err error) {
 }
 
 func AtomicReplaceFile(path string, write func(*os.File) error) (err error) {
+	return atomicReplaceFile(path, write, atomicReplaceOps{
+		createTemp: os.CreateTemp,
+		syncFile:   (*os.File).Sync,
+		closeFile:  (*os.File).Close,
+		rename:     os.Rename,
+		syncDir:    syncDir,
+	})
+}
+
+type atomicReplaceOps struct {
+	createTemp func(string, string) (*os.File, error)
+	syncFile   func(*os.File) error
+	closeFile  func(*os.File) error
+	rename     func(string, string) error
+	syncDir    func(string) error
+}
+
+func atomicReplaceFile(path string, write func(*os.File) error, ops atomicReplaceOps) (err error) {
 	dir := filepath.Dir(path)
 	if err := EnsureDir(dir); err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(dir, ".tele-tmp-*")
+	temp, err := ops.createTemp(dir, ".tele-tmp-*")
 	if err != nil {
 		return err
 	}
@@ -70,17 +88,17 @@ func AtomicReplaceFile(path string, write func(*os.File) error) (err error) {
 	if err := write(temp); err != nil {
 		return err
 	}
-	if err := temp.Sync(); err != nil {
+	if err := ops.syncFile(temp); err != nil {
 		return err
 	}
-	if err := temp.Close(); err != nil {
+	if err := ops.closeFile(temp); err != nil {
 		return err
 	}
 	temp = nil
-	if err := os.Rename(tempPath, path); err != nil {
+	if err := ops.rename(tempPath, path); err != nil {
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
-	if err := syncDir(dir); err != nil {
+	if err := ops.syncDir(dir); err != nil {
 		return err
 	}
 	return nil

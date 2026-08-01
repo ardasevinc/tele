@@ -49,6 +49,11 @@ assets. After the tap update, verify `brew upgrade tele`, `tele --version`, and
 `GOBIN`, then exercise `tele update --yes` from the preceding stable tag and
 confirm that it reports the newly published version.
 
+For the first release that contains the updater, the preceding published binary
+cannot perform that check. Build the release-candidate updater into the temporary
+`GOBIN` while stamping the preceding stable version and commit, then let it apply
+the published release. Later releases must use the actual preceding binary.
+
 ## Rollback
 
 GitHub-enforced release immutability applies to releases published after it was

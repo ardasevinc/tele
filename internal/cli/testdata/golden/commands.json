@@ -39,5 +39,6 @@
   "tele secrets migrate": {"schema":"tele/secret-migration/v1","profile":"main","source":{"backend":"vault-v1","instance":"8e34c2c8-9c20-4cb4-ae66-e63ee0f3be50"},"target":{"backend":"vault-v1","instance":"6ca742bb-9378-4c81-b4a7-b8b64367df01"},"key_count":2,"verified_at":"2026-07-31T23:30:00Z"},
   "tele secrets purge": {"profile":"main","backend":"vault-v1","instance":"8e34c2c8-9c20-4cb4-ae66-e63ee0f3be50","path":"/home/arda/.local/share/tele/main/secrets/8e34c2c8-9c20-4cb4-ae66-e63ee0f3be50.vault","active":false,"purged":false},
   "tele send": {"ok":true,"outcome":"confirmed","retry_safe":false,"action":"send","peer_ref":"user:10","message_id":8,"reconciliation_handle":"random_id:8","timestamp":"2026-07-15T12:00:00Z"},
-  "tele unread": [{"ref":"user:10","kind":"user","id":10,"title":"Alice","unread_count":1}]
+  "tele unread": [{"ref":"user:10","kind":"user","id":10,"title":"Alice","unread_count":1}],
+  "tele update": {"current_version":"1.1.0","current_commit":"abcdef0","latest_version":"1.2.0","status":"update_available","release_url":"https://github.com/ardasevinc/tele/releases/tag/v1.2.0","executable_path":"/home/arda/go/bin/tele","resolved_path":"/home/arda/go/bin/tele","install_manager":"go-install","update_supported":true,"recommended_command":"go install github.com/ardasevinc/tele/cmd/tele@v1.2.0","applied":false}
 }

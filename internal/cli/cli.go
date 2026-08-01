@@ -21,6 +21,7 @@ import (
 	"github.com/ardasevinc/tele/internal/output"
 	"github.com/ardasevinc/tele/internal/secrets"
 	tgapp "github.com/ardasevinc/tele/internal/telegram"
+	"github.com/ardasevinc/tele/internal/updater"
 )
 
 type exitError struct {
@@ -81,6 +82,7 @@ type appState struct {
 	ownedBotDiscoverer      botfactory.OwnedBotDiscoverer
 	botInventory            *botstore.Store
 	pathOverride            *config.Paths
+	updateClient            *updater.Client
 
 	in  io.Reader
 	out io.Writer
@@ -172,6 +174,7 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 	cmd.AddCommand(configCommand(s), profilesCommand(s), doctorCommand(s))
 	cmd.AddCommand(secretsCommand(s))
 	cmd.AddCommand(botsCommand(s))
+	cmd.AddCommand(updateCommand(s))
 	cmd.AddCommand(&cobra.Command{
 		Use:    "whoami",
 		Hidden: true,
@@ -556,7 +559,8 @@ func defaultTimeout(command string) time.Duration {
 		return defaultDownloadTimeout
 	case "tele config get", "tele config path", "tele config set",
 		"tele profiles current", "tele profiles list", "tele profiles use",
-		"tele doctor", "tele auth reset-local", "tele secrets init", "tele secrets migrate", "tele secrets purge":
+		"tele doctor", "tele auth reset-local", "tele secrets init", "tele secrets migrate", "tele secrets purge",
+		"tele update":
 		return defaultLocalTimeout
 	default:
 		return defaultCommandTimeout

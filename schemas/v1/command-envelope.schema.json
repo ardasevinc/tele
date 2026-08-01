@@ -122,6 +122,12 @@
         },
         {
           "properties": {
+            "meta": { "$ref": "#/$defs/update-command" },
+            "data": { "$ref": "#/$defs/update-result" }
+          }
+        },
+        {
+          "properties": {
             "meta": { "$ref": "#/$defs/doctor-command" },
             "data": { "$ref": "#/$defs/doctor" }
           }
@@ -242,6 +248,9 @@
     },
     "secrets-purge-command": {
       "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele secrets purge" } } }]
+    },
+    "update-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele update" } } }]
     },
     "doctor-command": {
       "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele doctor" } } }]
@@ -629,6 +638,26 @@
 		}
       },
       "additionalProperties": false
+	},
+	"update-result": {
+	  "type": "object",
+	  "required": ["current_version", "current_commit", "latest_version", "status", "release_url", "executable_path", "resolved_path", "install_manager", "update_supported", "recommended_command", "applied"],
+	  "properties": {
+		"current_version": { "type": "string", "minLength": 1 },
+		"current_commit": { "type": "string", "minLength": 1 },
+		"latest_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+		"status": { "enum": ["current", "update_available", "ahead", "unknown"] },
+		"release_url": { "type": "string", "format": "uri" },
+		"executable_path": { "type": "string", "minLength": 1 },
+		"resolved_path": { "type": "string", "minLength": 1 },
+		"install_manager": { "enum": ["homebrew", "go-install", "standalone", "unknown"] },
+		"update_supported": { "type": "boolean" },
+		"unsupported_reason": { "type": "string", "minLength": 1 },
+		"recommended_command": { "type": "string", "minLength": 1 },
+		"applied": { "type": "boolean" },
+		"verified_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" }
+	  },
+	  "additionalProperties": false
 	},
 	"doctor-check": {
 	  "type": "object",

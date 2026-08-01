@@ -272,12 +272,14 @@ install manager, and an exact recommendation. Add `--json` for the stable
 machine result. This command is read-only.
 
 `tele update --yes` mutates only an unambiguous, writable Go installation and
-pins the exact release tag before verifying the installed binary's version.
-Homebrew installations receive `brew upgrade tele`. Standalone archives remain
-check-only until tele can natively verify GitHub attestations, so the reported
-manual command verifies both `checksums.txt` and the selected archive before
-checking its digest. Development, dirty, prerelease, and unknown-provenance
-builds are always check-only.
+pins the exact release tag. It retains a same-directory rollback executable,
+requires the candidate to parse the current config and selected vault format,
+verifies its exact module version, and restores the prior executable if either
+check fails. Homebrew installations receive `brew upgrade tele`. Standalone
+archives remain check-only until tele can natively verify GitHub attestations,
+so the reported manual command verifies both `checksums.txt` and the selected
+archive before checking its digest. Development, dirty, prerelease,
+unknown-provenance, and unsupported-platform builds are always check-only.
 
 ## Untrusted content
 

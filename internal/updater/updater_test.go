@@ -81,13 +81,23 @@ func TestCheckClassifiesHomebrewStandaloneAndUnsafeBuilds(t *testing.T) {
 
 func TestApplyPinsAndVerifiesGoInstall(t *testing.T) {
 	var installed string
+	bin := filepath.Join(t.TempDir(), executableName())
+	if err := os.WriteFile(bin, []byte("old executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	client := &Client{
 		GoInstall: func(_ context.Context, module string) error {
 			installed = module
-			return nil
+			return os.WriteFile(bin, []byte("new executable"), 0o755)
+		},
+		Preflight: func(_ context.Context, path string, options ApplyOptions) (string, error) {
+			if path != bin || options.ConfigPath != "/config" || options.Profile != "main" {
+				t.Fatalf("preflight path=%q options=%+v", path, options)
+			}
+			return "tele-compatible-v1\n", nil
 		},
 		Smoke: func(_ context.Context, path string) (string, error) {
-			if path != "/go/bin/tele" {
+			if path != bin {
 				t.Fatalf("smoke path = %q", path)
 			}
 			return "tele version 1.2.0 (module v1.2.0)\n", nil
@@ -95,13 +105,19 @@ func TestApplyPinsAndVerifiesGoInstall(t *testing.T) {
 	}
 	result, err := client.Apply(context.Background(), Result{
 		LatestVersion: "1.2.0", Status: StatusUpdateAvailable, InstallManager: "go-install",
-		UpdateSupported: true, ResolvedPath: "/go/bin/tele",
-	})
+		UpdateSupported: true, ResolvedPath: bin,
+	}, ApplyOptions{ConfigPath: "/config", Profile: "main"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if installed != Module+"@v1.2.0" || !result.Applied || result.VerifiedVersion != "1.2.0" {
 		t.Fatalf("installed=%q result=%+v", installed, result)
+	}
+	if body, err := os.ReadFile(bin); err != nil || string(body) != "new executable" {
+		t.Fatalf("installed executable = %q, %v", body, err)
+	}
+	if matches, err := filepath.Glob(filepath.Join(filepath.Dir(bin), ".tele-rollback-*")); err != nil || len(matches) != 0 {
+		t.Fatalf("rollback candidates = %v, %v", matches, err)
 	}
 }
 
@@ -109,9 +125,48 @@ func TestApplyRefusesUnsupportedMutation(t *testing.T) {
 	_, err := (&Client{}).Apply(context.Background(), Result{
 		LatestVersion: "1.2.0", Status: StatusUpdateAvailable, InstallManager: "standalone",
 		UnsupportedReason: "attestation required", RecommendedCommand: "verify manually",
-	})
+	}, ApplyOptions{})
 	if err == nil || !strings.Contains(err.Error(), "verify manually") {
 		t.Fatalf("Apply error = %v", err)
+	}
+}
+
+func TestApplyRestoresExecutableOnPreflightOrSmokeFailure(t *testing.T) {
+	for _, failure := range []string{"preflight", "smoke"} {
+		t.Run(failure, func(t *testing.T) {
+			bin := filepath.Join(t.TempDir(), executableName())
+			if err := os.WriteFile(bin, []byte("old executable"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			client := &Client{
+				GoInstall: func(context.Context, string) error {
+					return os.WriteFile(bin, []byte("new executable"), 0o755)
+				},
+				Preflight: func(context.Context, string, ApplyOptions) (string, error) {
+					if failure == "preflight" {
+						return "", errors.New("incompatible data")
+					}
+					return "tele-compatible-v1", nil
+				},
+				Smoke: func(context.Context, string) (string, error) {
+					if failure == "smoke" {
+						return "tele version wrong", nil
+					}
+					return "tele version 1.2.0 (module v1.2.0)", nil
+				},
+			}
+			_, err := client.Apply(context.Background(), Result{
+				LatestVersion: "1.2.0", Status: StatusUpdateAvailable, InstallManager: "go-install",
+				UpdateSupported: true, ResolvedPath: bin,
+			}, ApplyOptions{})
+			if err == nil {
+				t.Fatal("Apply accepted failed candidate verification")
+			}
+			body, readErr := os.ReadFile(bin)
+			if readErr != nil || string(body) != "old executable" {
+				t.Fatalf("restored executable = %q, %v; Apply error = %v", body, readErr, err)
+			}
+		})
 	}
 }
 

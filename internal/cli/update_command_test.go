@@ -44,6 +44,9 @@ func TestUpdateCheckAndExplicitApply(t *testing.T) {
 			installed = module
 			return nil
 		},
+		Preflight: func(context.Context, string, updater.ApplyOptions) (string, error) {
+			return "tele-compatible-v1", nil
+		},
 		Smoke: func(context.Context, string) (string, error) {
 			return "tele version 1.2.0 (module v1.2.0)\n", nil
 		},

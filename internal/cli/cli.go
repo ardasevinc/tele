@@ -175,6 +175,7 @@ func rootCommand(ctx context.Context, s *appState) *cobra.Command {
 	cmd.AddCommand(secretsCommand(s))
 	cmd.AddCommand(botsCommand(s))
 	cmd.AddCommand(updateCommand(s))
+	cmd.AddCommand(internalCommand(s))
 	cmd.AddCommand(&cobra.Command{
 		Use:    "whoami",
 		Hidden: true,

@@ -32,7 +32,7 @@ func updateCommand(s *appState) *cobra.Command {
 				return err
 			}
 			if yes {
-				result, err = client.Apply(cmd.Context(), result)
+				result, err = client.Apply(cmd.Context(), result, updater.ApplyOptions{ConfigPath: s.cfgPath, Profile: s.profile})
 				if err != nil {
 					return err
 				}

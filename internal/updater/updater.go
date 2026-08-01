@@ -60,7 +60,13 @@ type Client struct {
 	EvalSymlinks func(string) (string, error)
 	GoEnv        func(context.Context, string) (string, error)
 	GoInstall    func(context.Context, string) error
+	Preflight    func(context.Context, string, ApplyOptions) (string, error)
 	Smoke        func(context.Context, string) (string, error)
+}
+
+type ApplyOptions struct {
+	ConfigPath string
+	Profile    string
 }
 
 type githubRelease struct {
@@ -107,10 +113,14 @@ func (c *Client) Check(ctx context.Context, currentVersion, currentCommit string
 		result.UpdateSupported = false
 		result.UnsupportedReason = "development, dirty, or prerelease builds are check-only"
 	}
+	if !supportedRuntime() {
+		result.UpdateSupported = false
+		result.UnsupportedReason = "automatic updates are unavailable on this unsupported OS or architecture"
+	}
 	return result, nil
 }
 
-func (c *Client) Apply(ctx context.Context, result Result) (Result, error) {
+func (c *Client) Apply(ctx context.Context, result Result, options ApplyOptions) (Result, error) {
 	if result.Status != StatusUpdateAvailable {
 		return result, nil
 	}
@@ -118,16 +128,36 @@ func (c *Client) Apply(ctx context.Context, result Result) (Result, error) {
 		return result, fmt.Errorf("automatic update is unavailable: %s; run %s", result.UnsupportedReason, result.RecommendedCommand)
 	}
 	tag := "v" + result.LatestVersion
+	rollbackPath, err := backupExecutable(result.ResolvedPath)
+	if err != nil {
+		return result, fmt.Errorf("prepare rollback for %s: %w", tag, err)
+	}
+	rollback := func(primary error) (Result, error) {
+		if restoreErr := restoreExecutable(rollbackPath, result.ResolvedPath); restoreErr != nil {
+			return result, errors.Join(primary, fmt.Errorf("restore previous executable: %w", restoreErr))
+		}
+		return result, primary
+	}
 	if err := c.goInstall(ctx, Module+"@"+tag); err != nil {
-		return result, fmt.Errorf("install %s: %w", tag, err)
+		return rollback(fmt.Errorf("install %s: %w", tag, err))
+	}
+	preflightOutput, err := c.preflight(ctx, result.ResolvedPath, options)
+	if err != nil {
+		return rollback(fmt.Errorf("compatibility preflight for %s: %w", tag, err))
+	}
+	if strings.TrimSpace(preflightOutput) != "tele-compatible-v1" {
+		return rollback(fmt.Errorf("compatibility preflight reported %q", strings.TrimSpace(preflightOutput)))
 	}
 	versionOutput, err := c.smoke(ctx, result.ResolvedPath)
 	if err != nil {
-		return result, fmt.Errorf("verify installed %s: %w", tag, err)
+		return rollback(fmt.Errorf("verify installed %s: %w", tag, err))
 	}
 	want := fmt.Sprintf("tele version %s (module %s)", result.LatestVersion, tag)
 	if strings.TrimSpace(versionOutput) != want {
-		return result, fmt.Errorf("installed binary reported %q, want %q", strings.TrimSpace(versionOutput), want)
+		return rollback(fmt.Errorf("installed binary reported %q, want %q", strings.TrimSpace(versionOutput), want))
+	}
+	if err := discardRollback(rollbackPath); err != nil {
+		return result, fmt.Errorf("updated and verified %s but could not remove rollback candidate: %w", tag, err)
 	}
 	result.Applied = true
 	result.VerifiedVersion = result.LatestVersion
@@ -301,6 +331,14 @@ func normalizedArch(arch string) string {
 	return arch
 }
 
+func supportedRuntime() bool {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		return false
+	}
+	arch := normalizedArch(runtime.GOARCH)
+	return arch == "amd64" || arch == "arm64"
+}
+
 func executableName() string {
 	if runtime.GOOS == "windows" {
 		return "tele.exe"
@@ -380,4 +418,86 @@ func (c *Client) smoke(ctx context.Context, path string) (string, error) {
 	}
 	output, err := exec.CommandContext(ctx, path, "--version").CombinedOutput() // #nosec G204 -- path is the resolved running executable and Go install destination.
 	return string(output), err
+}
+
+func (c *Client) preflight(ctx context.Context, path string, options ApplyOptions) (string, error) {
+	if c.Preflight != nil {
+		return c.Preflight(ctx, path, options)
+	}
+	args := make([]string, 0, 6)
+	if options.ConfigPath != "" {
+		args = append(args, "--config", options.ConfigPath)
+	}
+	if options.Profile != "" {
+		args = append(args, "--profile", options.Profile)
+	}
+	args = append(args, "internal", "compatibility")
+	output, err := exec.CommandContext(ctx, path, args...).CombinedOutput() // #nosec G204 -- path is the resolved Go install destination and arguments are fixed or locally selected paths/profile names.
+	return string(output), err
+}
+
+func backupExecutable(path string) (string, error) {
+	source, err := os.Open(path) // #nosec G304 -- path is the resolved running executable and exact Go install target.
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = source.Close() }()
+	info, err := source.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		if err == nil {
+			err = errors.New("running executable is not a regular file")
+		}
+		return "", err
+	}
+	target, err := os.CreateTemp(filepath.Dir(path), ".tele-rollback-*")
+	if err != nil {
+		return "", err
+	}
+	rollbackPath := target.Name()
+	complete := false
+	defer func() {
+		if !complete {
+			_ = target.Close()
+			_ = os.Remove(rollbackPath)
+		}
+	}()
+	if err := target.Chmod(info.Mode().Perm()); err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(target, source); err != nil {
+		return "", err
+	}
+	if err := target.Sync(); err != nil {
+		return "", err
+	}
+	if err := target.Close(); err != nil {
+		return "", err
+	}
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		return "", err
+	}
+	complete = true
+	return rollbackPath, nil
+}
+
+func restoreExecutable(rollbackPath, targetPath string) error {
+	if err := os.Rename(rollbackPath, targetPath); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(targetPath))
+}
+
+func discardRollback(path string) error {
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(path))
+}
+
+func syncDirectory(path string) error {
+	dir, err := os.Open(path) // #nosec G304 -- path is the resolved executable's directory.
+	if err != nil {
+		return err
+	}
+	return errors.Join(dir.Sync(), dir.Close())
 }

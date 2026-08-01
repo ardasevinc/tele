@@ -177,6 +177,70 @@ func TestVaultPassphraseSourcesAreMutuallyExclusive(t *testing.T) {
 	}
 }
 
+func TestVaultMigrationSelectorFailureRetainsSourceAuthority(t *testing.T) {
+	root := t.TempDir()
+	dataRoot := filepath.Join(root, "data")
+	configPath := filepath.Join(root, "config", "tele.toml")
+	passphrasePath := filepath.Join(root, "credential")
+	passphrase := []byte("selector failure passphrase")
+	if err := os.WriteFile(passphrasePath, append(append([]byte(nil), passphrase...), '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sourceInstance := "4ce21a61-83de-463a-92c2-85701457a13a"
+	sourcePath := secrets.VaultPath(dataRoot, "main", sourceInstance)
+	source, err := secrets.CreateVault(context.Background(), sourcePath, "main", sourceInstance, passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Set(context.Background(), "main", telegram.APIHashSecretKey, []byte("retained secret")); err != nil {
+		t.Fatal(err)
+	}
+	source.Close()
+	if err := config.Save(configPath, config.Config{
+		DefaultProfile: "main",
+		Profiles: map[string]config.Profile{
+			"main": {Secrets: &config.SecretBackend{Backend: string(secrets.BackendVault), Instance: sourceInstance}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	injected := errors.New("injected selector failure")
+	state := &appState{
+		cfgPath: configPath, profile: "main", vaultPassphraseFile: passphrasePath, vaultPassphraseFD: -1,
+		pathOverride: &config.Paths{Config: configPath, Data: dataRoot},
+		configUpdater: func(context.Context, string, func(*config.Config) error) error {
+			return injected
+		},
+	}
+	receipt, err := state.migrateSecrets(context.Background(), secrets.BackendVault)
+	if !errors.Is(err, injected) {
+		t.Fatalf("migration error = %v", err)
+	}
+	if receipt.Target.Instance == "" || receipt.Target.Instance == sourceInstance {
+		t.Fatalf("target receipt = %+v", receipt)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := cfg.Profiles["main"].Secrets
+	if selected == nil || selected.Instance != sourceInstance || selected.Backend != string(secrets.BackendVault) {
+		t.Fatalf("failed activation changed source authority: %+v", selected)
+	}
+	for _, instance := range []string{sourceInstance, receipt.Target.Instance} {
+		store, openErr := secrets.OpenVault(secrets.VaultPath(dataRoot, "main", instance), "main", instance, passphrase)
+		if openErr != nil {
+			t.Fatalf("open retained instance %s: %v", instance, openErr)
+		}
+		value, getErr := store.Get(context.Background(), "main", telegram.APIHashSecretKey)
+		store.Close()
+		if getErr != nil || string(value) != "retained secret" {
+			t.Fatalf("instance %s secret = %q, %v", instance, value, getErr)
+		}
+	}
+}
+
 func TestLegacyMigrationSnapshotUsesFixedCatalogWithoutConfiguredBots(t *testing.T) {
 	ctx := context.Background()
 	store := &botCommandStore{values: map[string][]byte{

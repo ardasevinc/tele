@@ -82,6 +82,7 @@ type appState struct {
 	ownedBotDiscoverer      botfactory.OwnedBotDiscoverer
 	botInventory            *botstore.Store
 	pathOverride            *config.Paths
+	configUpdater           func(context.Context, string, func(*config.Config) error) error
 	updateClient            *updater.Client
 
 	in  io.Reader
@@ -376,6 +377,13 @@ func (s *appState) loadConfig() (config.Config, error) {
 		cfg.Profiles = map[string]config.Profile{}
 	}
 	return cfg, nil
+}
+
+func (s *appState) updateConfig(ctx context.Context, update func(*config.Config) error) error {
+	if s.configUpdater != nil {
+		return s.configUpdater(ctx, s.cfgPath, update)
+	}
+	return config.Update(ctx, s.cfgPath, update)
 }
 
 func (s *appState) defaultLimit(value int) int {

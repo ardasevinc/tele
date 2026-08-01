@@ -193,7 +193,7 @@ func (s *appState) initVault(ctx context.Context) (secretInitResult, error) {
 			return err
 		}
 		store.Close()
-		return config.Update(ctx, s.cfgPath, func(current *config.Config) error {
+		return s.updateConfig(ctx, func(current *config.Config) error {
 			_, currentProfile, err := current.ResolveProfile(profileName)
 			if err != nil {
 				return err
@@ -250,7 +250,7 @@ func (s *appState) initSecretService(ctx context.Context) (secretInitResult, err
 			return err
 		}
 		store.Close()
-		return config.Update(ctx, s.cfgPath, func(current *config.Config) error {
+		return s.updateConfig(ctx, func(current *config.Config) error {
 			_, currentProfile, err := current.ResolveProfile(profileName)
 			if err != nil {
 				return err
@@ -307,7 +307,7 @@ func (s *appState) initKeychain(ctx context.Context) (secretInitResult, error) {
 			return err
 		}
 		store.Close()
-		return config.Update(ctx, s.cfgPath, func(current *config.Config) error {
+		return s.updateConfig(ctx, func(current *config.Config) error {
 			_, currentProfile, err := current.ResolveProfile(profileName)
 			if err != nil {
 				return err
@@ -420,7 +420,7 @@ func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.Bac
 		if err := privatefs.AtomicWriteFile(receiptPath, encoded); err != nil {
 			return &secrets.BackendError{Kind: secrets.ErrMigrationIncomplete, Detail: "migration receipt write failed"}
 		}
-		return config.Update(ctx, s.cfgPath, func(current *config.Config) error {
+		return s.updateConfig(ctx, func(current *config.Config) error {
 			_, currentProfile, err := current.ResolveProfile(profileName)
 			if err != nil {
 				return err

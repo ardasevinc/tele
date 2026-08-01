@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,9 +21,9 @@ import (
 func TestLegacyKeychainMigrationRealLifecycle(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	profile := fmt.Sprintf("legacy-migration-%d", time.Now().UnixNano())
 	configPath := filepath.Join(home, "config", "tele.toml")
+	dataRoot := filepath.Join(home, "data")
 	if err := config.Save(configPath, config.Config{
 		DefaultProfile: profile,
 		Profiles:       map[string]config.Profile{profile: {}},
@@ -36,19 +37,28 @@ func TestLegacyKeychainMigrationRealLifecycle(t *testing.T) {
 		session.EncryptionKey:         []byte("legacy-session-secret"),
 	}
 	for key, value := range values {
-		if err := legacy.Set(ctx, profile, key, value); err != nil {
-			t.Fatal(err)
+		account := profile + ":" + key
+		if output, err := exec.Command(
+			"/usr/bin/security", "add-generic-password", "-U",
+			"-s", "tele", "-a", account, "-w", string(value),
+		).CombinedOutput(); err != nil {
+			t.Fatalf("seed legacy Keychain item %q: %v: %s", key, err, output)
 		}
+		retained, err := legacy.Get(ctx, profile, key)
+		if err != nil || !bytes.Equal(retained, value) {
+			t.Fatalf("verify legacy Keychain item %q: match=%t err=%v", key, bytes.Equal(retained, value), err)
+		}
+		zeroSecret(retained)
 		key := key
 		t.Cleanup(func() { _ = legacy.Delete(ctx, profile, key) })
 	}
 
-	dataRoot := filepath.Join(home, ".local", "share", "tele")
 	inventory := botstore.New(dataRoot, profile)
 	state := &appState{
 		cfgPath:      configPath,
 		profile:      profile,
 		botInventory: &inventory,
+		pathOverride: &config.Paths{Config: configPath, Data: dataRoot},
 	}
 	receipt, err := state.migrateSecrets(ctx, secrets.BackendKeychain)
 	if err != nil {

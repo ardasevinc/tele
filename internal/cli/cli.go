@@ -80,6 +80,7 @@ type appState struct {
 	managedBotCreator       botfactory.ManagedBotCreator
 	ownedBotDiscoverer      botfactory.OwnedBotDiscoverer
 	botInventory            *botstore.Store
+	pathOverride            *config.Paths
 
 	in  io.Reader
 	out io.Writer
@@ -639,6 +640,9 @@ func (s *appState) paths() (config.Paths, error) {
 }
 
 func (s *appState) pathResolution() (config.Paths, *config.PathConflictError, error) {
+	if s.pathOverride != nil {
+		return *s.pathOverride, nil, nil
+	}
 	paths, err := config.DefaultPaths()
 	if err != nil {
 		var conflict *config.PathConflictError

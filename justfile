@@ -38,9 +38,11 @@ modules:
     go mod verify
 
 build-all:
-    go build -o "${TMPDIR:-/tmp}/tele-darwin-arm64" ./cmd/tele
-    GOOS=linux GOARCH=amd64 go build -o "${TMPDIR:-/tmp}/tele-linux-amd64" ./cmd/tele
-    GOOS=windows GOARCH=amd64 go build -o "${TMPDIR:-/tmp}/tele-windows-amd64.exe" ./cmd/tele
+    CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o "${TMPDIR:-/tmp}/tele-darwin-amd64" ./cmd/tele
+    CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o "${TMPDIR:-/tmp}/tele-darwin-arm64" ./cmd/tele
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "${TMPDIR:-/tmp}/tele-linux-amd64" ./cmd/tele
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o "${TMPDIR:-/tmp}/tele-linux-arm64" ./cmd/tele
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "${TMPDIR:-/tmp}/tele-windows-amd64.exe" ./cmd/tele
 
 diff-check:
     git diff --check

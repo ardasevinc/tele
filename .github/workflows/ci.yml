@@ -58,6 +58,7 @@ jobs:
           sha256sum --check checksums.txt
           mkdir "$RUNNER_TEMP/tele-smoke"
           tar -xzf "tele_${version}_linux_amd64.tar.gz" -C "$RUNNER_TEMP/tele-smoke"
+          file "$RUNNER_TEMP/tele-smoke/tele" | grep -q 'statically linked'
           test "$("$RUNNER_TEMP/tele-smoke/tele" --version)" = "tele version $version ($GITHUB_SHA)"
 
   macos:

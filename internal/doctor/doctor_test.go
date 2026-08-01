@@ -19,6 +19,10 @@ type memoryStore struct {
 	values map[string][]byte
 }
 
+func (s *memoryStore) CatalogDiagnostics(context.Context) (secrets.CatalogDiagnostics, error) {
+	return secrets.CatalogDiagnostics{Generation: 7, Mappings: len(s.values), PhysicalItems: len(s.values)}, nil
+}
+
 func (s *memoryStore) Get(_ context.Context, profile, key string) ([]byte, error) {
 	value, ok := s.values[profile+":"+key]
 	if !ok {
@@ -166,6 +170,21 @@ func TestRunReportsPortableVaultMetadataWithoutSecretValues(t *testing.T) {
 	encoded, _ := json.Marshal(report)
 	if strings.Contains(string(encoded), "SUPERSECRET") || strings.Contains(string(encoded), "valid gotd session bytes") {
 		t.Fatalf("doctor leaked secret values: %s", encoded)
+	}
+}
+
+func TestRunInspectsNativeCatalogThroughLazyStore(t *testing.T) {
+	fx := validFixture(t)
+	fx.opts.SecretBackendID = secrets.BackendKeychain
+	fx.opts.SecretBackendInstance = "95a82a93-9282-46af-afc8-8000299505ff"
+	fx.opts.Secrets = &secrets.LazyStore{Open: func(context.Context) (secrets.Store, error) {
+		return fx.store, nil
+	}}
+
+	report := Run(context.Background(), fx.opts)
+	check := checkNamed(t, report, "secret_catalog")
+	if check.Status != Pass || check.Details["generation"] != uint64(7) || check.Details["mappings"] != 2 {
+		t.Fatalf("secret_catalog check = %+v", check)
 	}
 }
 

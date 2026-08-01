@@ -48,6 +48,34 @@ func TestLazyStoreOpensBackendOnce(t *testing.T) {
 	}
 }
 
+func TestLazyStoreForwardsCatalogDiagnostics(t *testing.T) {
+	want := CatalogDiagnostics{Generation: 7, Mappings: 4, PhysicalItems: 5, Orphans: 1}
+	backend := &catalogMemorySecretStore{
+		memorySecretStore: memorySecretStore{values: map[string][]byte{}},
+		diagnostics:       want,
+	}
+	lazy := &LazyStore{Open: func(context.Context) (Store, error) {
+		return backend, nil
+	}}
+
+	got, err := lazy.CatalogDiagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("CatalogDiagnostics = %+v, want %+v", got, want)
+	}
+}
+
+type catalogMemorySecretStore struct {
+	memorySecretStore
+	diagnostics CatalogDiagnostics
+}
+
+func (s *catalogMemorySecretStore) CatalogDiagnostics(context.Context) (CatalogDiagnostics, error) {
+	return s.diagnostics, nil
+}
+
 type memorySecretStore struct {
 	values map[string][]byte
 }

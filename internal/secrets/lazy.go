@@ -61,6 +61,18 @@ func (s *LazyStore) VaultDiagnostics(ctx context.Context) (VaultDiagnostics, err
 	return diagnoser.VaultDiagnostics(ctx)
 }
 
+func (s *LazyStore) CatalogDiagnostics(ctx context.Context) (CatalogDiagnostics, error) {
+	store, err := s.resolve(ctx)
+	if err != nil {
+		return CatalogDiagnostics{}, err
+	}
+	diagnoser, ok := store.(CatalogDiagnoser)
+	if !ok {
+		return CatalogDiagnostics{}, &BackendError{Kind: ErrBackendUnavailable, Detail: "backend does not expose catalog diagnostics"}
+	}
+	return diagnoser.CatalogDiagnostics(ctx)
+}
+
 func (s *LazyStore) resolve(ctx context.Context) (Store, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -22,7 +22,10 @@ func TestSecretsInitAndAPIHashRoundTripOnLinux(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux portable-vault workflow")
 	}
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	dataHome := filepath.Join(root, "data")
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("XDG_DATA_HOME", dataHome)
@@ -34,7 +37,7 @@ func TestSecretsInitAndAPIHashRoundTripOnLinux(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	state := &appState{in: strings.NewReader("must not be read"), out: &stdout, err: &stderr}
-	err := executeWithState(context.Background(), []string{
+	err = executeWithState(context.Background(), []string{
 		"--json", "--config", configPath, "--profile", "main",
 		"--vault-passphrase-file", passphrasePath,
 		"secrets", "init", "--backend", "vault-v1",
@@ -178,7 +181,10 @@ func TestVaultPassphraseSourcesAreMutuallyExclusive(t *testing.T) {
 }
 
 func TestVaultMigrationSelectorFailureRetainsSourceAuthority(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	dataRoot := filepath.Join(root, "data")
 	configPath := filepath.Join(root, "config", "tele.toml")
 	passphrasePath := filepath.Join(root, "credential")

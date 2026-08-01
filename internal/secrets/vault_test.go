@@ -254,7 +254,7 @@ func TestVaultSeparateProcessWritersPreserveAllRecords(t *testing.T) {
 		return
 	}
 
-	path := filepath.Join(t.TempDir(), "vault")
+	path := filepath.Join(secureTempDir(t), "vault")
 	store, err := CreateVault(context.Background(), path, "main", testVaultInstance, []byte("process writer passphrase"))
 	if err != nil {
 		t.Fatal(err)

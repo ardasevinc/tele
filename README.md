@@ -44,7 +44,7 @@ macOS arm64 example requires the GitHub CLI:
 ```sh
 (
   set -eu
-  version=1.2.0
+  version=1.2.1
   asset="tele_${version}_darwin_arm64.tar.gz"
   tmp="$(mktemp -d)"
   cd "$tmp"
@@ -65,10 +65,10 @@ platform.
 Install the pinned stable version through the Go module proxy:
 
 ```sh
-go install github.com/ardasevinc/tele/cmd/tele@v1.2.0
+go install github.com/ardasevinc/tele/cmd/tele@v1.2.1
 ```
 
-To intentionally follow the newest published version, replace `@v1.2.0` with
+To intentionally follow the newest published version, replace `@v1.2.1` with
 `@latest`. Go-installed binaries report their module version as provenance;
 release archives and local-checkout installs report the exact source commit.
 

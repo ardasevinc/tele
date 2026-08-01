@@ -140,11 +140,10 @@ type OpenOptions struct {
 }
 
 func Open(ctx context.Context, selection Selection, opts OpenOptions) (Store, error) {
-	if selection.Backend == "" {
-		if runtime.GOOS == "darwin" {
-			return openLegacyKeychain()
-		}
-		return nil, &BackendError{Kind: ErrBackendUnconfigured, Detail: "run tele secrets init --backend vault-v1"}
+	var err error
+	selection, err = EffectiveSelection(selection)
+	if err != nil {
+		return nil, err
 	}
 	switch selection.Backend {
 	case BackendVault:
@@ -153,7 +152,7 @@ func Open(ctx context.Context, selection Selection, opts OpenOptions) (Store, er
 		}
 		return OpenVault(VaultPath(opts.DataRoot, opts.Profile, selection.Instance), opts.Profile, selection.Instance, opts.Passphrase)
 	case BackendKeychainLegacy:
-		return openLegacyKeychain()
+		return openLegacyKeychain(opts.DataRoot)
 	case BackendSecretService:
 		if selection.Instance == "" {
 			return nil, &BackendError{Kind: ErrBackendUnconfigured, Backend: BackendSecretService, Detail: "missing instance UUID"}
@@ -167,6 +166,16 @@ func Open(ctx context.Context, selection Selection, opts OpenOptions) (Store, er
 	default:
 		return nil, &BackendError{Kind: ErrBackendUnavailable, Backend: selection.Backend, Detail: "unknown backend ID"}
 	}
+}
+
+func EffectiveSelection(selection Selection) (Selection, error) {
+	if selection.Backend == "" {
+		if runtime.GOOS == "darwin" {
+			return Selection{Backend: BackendKeychainLegacy}, nil
+		}
+		return Selection{}, &BackendError{Kind: ErrBackendUnconfigured, Detail: "run tele secrets init --backend vault-v1"}
+	}
+	return selection, nil
 }
 
 func BackendDisplayName(id BackendID) string {

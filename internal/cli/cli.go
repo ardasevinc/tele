@@ -339,6 +339,14 @@ func (s *appState) botsStore() (botstore.Store, error) {
 	return botstore.New(paths.Data, s.profileName()), nil
 }
 
+func (s *appState) withProfileSecretLock(ctx context.Context, fn func(context.Context) error) error {
+	paths, err := s.paths()
+	if err != nil {
+		return err
+	}
+	return secrets.WithProfileLock(ctx, paths.Data, s.profileName(), fn)
+}
+
 func (s *appState) writer() output.Writer {
 	return s.writerWithDefault(output.Human)
 }

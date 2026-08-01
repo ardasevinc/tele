@@ -299,6 +299,18 @@ func validateInventory(inventory Inventory) error {
 			return errors.New("reconciliation local bot IDs do not match inventory")
 		}
 	}
+	for _, bot := range inventory.Bots {
+		if bot.RemoteCheckedAt == nil || !bot.RemoteCheckedAt.Equal(reconciliation.CheckedAt) {
+			return fmt.Errorf("bot %d remote check does not match reconciliation", bot.ID)
+		}
+		_, remoteExists := remote[bot.ID]
+		if remoteExists && bot.TombstonedAt != nil {
+			return fmt.Errorf("remote bot %d is incorrectly tombstoned", bot.ID)
+		}
+		if !remoteExists && bot.TombstonedAt == nil {
+			return fmt.Errorf("local-only bot %d is not tombstoned", bot.ID)
+		}
+	}
 	pending, err := idSet("reconciliation pending import IDs", reconciliation.PendingImportIDs)
 	if err != nil {
 		return err

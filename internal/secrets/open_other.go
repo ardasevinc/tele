@@ -2,6 +2,6 @@
 
 package secrets
 
-func openLegacyKeychain() (Store, error) {
+func openLegacyKeychain(string) (Store, error) {
 	return nil, &BackendError{Kind: ErrBackendUnavailable, Backend: BackendKeychainLegacy}
 }

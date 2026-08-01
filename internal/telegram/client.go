@@ -57,11 +57,17 @@ type ChatOptions struct {
 }
 
 func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.Client) error) error {
+	return a.withProfileLock(ctx, func(ctx context.Context) error {
+		return a.runUnlocked(ctx, fn)
+	})
+}
+
+func (a App) runUnlocked(ctx context.Context, fn func(ctx context.Context, c *telegram.Client) error) error {
 	profile, err := a.profile()
 	if err != nil {
 		return err
 	}
-	hash, err := a.Secrets.Get(ctx, a.Profile, apiHashKey)
+	hash, err := a.Secrets.Get(ctx, a.Profile, APIHashSecretKey)
 	if errors.Is(err, secrets.ErrNotFound) {
 		return fmt.Errorf("missing api_hash for profile %q; run tele config set api-hash", a.Profile)
 	}
@@ -88,6 +94,13 @@ func (a App) Run(ctx context.Context, fn func(ctx context.Context, c *telegram.C
 		return callbackErr
 	})
 	return clientRunError(runErr, callbackErr, called)
+}
+
+func (a App) withProfileLock(ctx context.Context, fn func(context.Context) error) error {
+	if a.Paths.Data == "" || a.Profile == "" {
+		return fn(ctx)
+	}
+	return secrets.WithProfileLock(ctx, a.Paths.Data, a.Profile, fn)
 }
 
 func runtimeDeviceConfig() telegram.DeviceConfig {

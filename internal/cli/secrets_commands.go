@@ -14,10 +14,13 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/ardasevinc/tele/internal/botfactory"
 	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/output"
 	"github.com/ardasevinc/tele/internal/privatefs"
 	"github.com/ardasevinc/tele/internal/secrets"
+	"github.com/ardasevinc/tele/internal/session"
+	tgapp "github.com/ardasevinc/tele/internal/telegram"
 )
 
 func secretsCommand(s *appState) *cobra.Command {
@@ -335,11 +338,13 @@ func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.Bac
 	if err != nil {
 		return migrationReceipt{}, err
 	}
-	if profile.Secrets == nil {
-		return migrationReceipt{}, &secrets.BackendError{Kind: secrets.ErrBackendUnconfigured, Detail: "migration source is not selected"}
+	sourceConfigured := selectionFromProfile(profile)
+	sourceSelection, err := secrets.EffectiveSelection(sourceConfigured)
+	if err != nil {
+		return migrationReceipt{}, err
 	}
 	var passphrase []byte
-	sourceBackend := secrets.BackendID(profile.Secrets.Backend)
+	sourceBackend := sourceSelection.Backend
 	if sourceBackend == secrets.BackendVault || targetBackend == secrets.BackendVault {
 		passphrase, err = s.readVaultPassphrase(false)
 		if err != nil {
@@ -361,20 +366,15 @@ func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.Bac
 		if err != nil {
 			return err
 		}
-		if latestProfile.Secrets == nil || latestProfile.Secrets.Backend != profile.Secrets.Backend || latestProfile.Secrets.Instance != profile.Secrets.Instance {
+		if !profileStillSelects(latestProfile, sourceConfigured) {
 			return &secrets.BackendError{Kind: secrets.ErrMigrationIncomplete, Detail: "source selector changed before migration"}
 		}
-		sourceSelection := secrets.Selection{Backend: secrets.BackendID(profile.Secrets.Backend), Instance: profile.Secrets.Instance}
 		source, err := secrets.Open(ctx, sourceSelection, secrets.OpenOptions{DataRoot: paths.Data, Profile: profileName, Passphrase: passphrase})
 		if err != nil {
 			return err
 		}
 		defer closeSecretStore(source)
-		snapshotter, ok := source.(secrets.Snapshotter)
-		if !ok {
-			return &secrets.BackendError{Kind: secrets.ErrCatalogIncomplete, Backend: sourceSelection.Backend, Detail: "source has no authoritative catalog"}
-		}
-		snapshot, err := snapshotter.Snapshot(ctx)
+		snapshot, err := s.migrationSnapshot(ctx, sourceSelection, source, profileName)
 		if err != nil {
 			return err
 		}
@@ -425,7 +425,7 @@ func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.Bac
 			if err != nil {
 				return err
 			}
-			if currentProfile.Secrets == nil || currentProfile.Secrets.Backend != profile.Secrets.Backend || currentProfile.Secrets.Instance != profile.Secrets.Instance {
+			if !profileStillSelects(currentProfile, sourceConfigured) {
 				return &secrets.BackendError{Kind: secrets.ErrMigrationIncomplete, Detail: "source selector changed before activation"}
 			}
 			currentProfile.Secrets = &config.SecretBackend{Backend: string(targetBackend), Instance: targetInstance}
@@ -434,6 +434,93 @@ func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.Bac
 		})
 	})
 	return receipt, err
+}
+
+func selectionFromProfile(profile config.Profile) secrets.Selection {
+	if profile.Secrets == nil {
+		return secrets.Selection{}
+	}
+	return secrets.Selection{
+		Backend:  secrets.BackendID(profile.Secrets.Backend),
+		Instance: profile.Secrets.Instance,
+	}
+}
+
+func profileStillSelects(profile config.Profile, expected secrets.Selection) bool {
+	if expected.Backend == "" {
+		return profile.Secrets == nil
+	}
+	return profile.Secrets != nil &&
+		profile.Secrets.Backend == string(expected.Backend) &&
+		profile.Secrets.Instance == expected.Instance
+}
+
+func (s *appState) migrationSnapshot(
+	ctx context.Context,
+	selection secrets.Selection,
+	source secrets.Store,
+	profile string,
+) (map[string][]byte, error) {
+	if selection.Backend != secrets.BackendKeychainLegacy {
+		snapshotter, ok := source.(secrets.Snapshotter)
+		if !ok {
+			return nil, &secrets.BackendError{Kind: secrets.ErrCatalogIncomplete, Backend: selection.Backend, Detail: "source has no authoritative catalog"}
+		}
+		return snapshotter.Snapshot(ctx)
+	}
+	discoverer, err := s.botDiscoverer()
+	if err != nil {
+		return nil, err
+	}
+	inventory, err := s.botsStore()
+	if err != nil {
+		return nil, err
+	}
+	dynamicKeys, err := botfactory.VerifyLegacyBotCatalog(
+		ctx,
+		source,
+		s.botManagerAPI(),
+		discoverer,
+		inventory,
+		profile,
+		secrets.BackendDisplayName(selection.Backend),
+	)
+	if err != nil {
+		return nil, err
+	}
+	keys := append([]string{
+		tgapp.APIHashSecretKey,
+		tgapp.AuthPendingSecretKey,
+		session.EncryptionKey,
+		botfactory.ManagerSecretKey,
+	}, dynamicKeys...)
+	return snapshotKnownKeys(ctx, source, profile, keys)
+}
+
+func snapshotKnownKeys(ctx context.Context, source secrets.Store, profile string, keys []string) (map[string][]byte, error) {
+	sort.Strings(keys)
+	snapshot := make(map[string][]byte, len(keys))
+	previous := ""
+	for _, key := range keys {
+		if key == previous {
+			continue
+		}
+		previous = key
+		value, err := source.Get(ctx, profile, key)
+		if errors.Is(err, secrets.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			zeroSnapshot(snapshot)
+			return nil, &secrets.BackendError{
+				Kind:    secrets.ErrCatalogIncomplete,
+				Backend: secrets.BackendKeychainLegacy,
+				Detail:  fmt.Sprintf("known key %q could not be read", key),
+			}
+		}
+		snapshot[key] = value
+	}
+	return snapshot, nil
 }
 
 func createMigrationTarget(ctx context.Context, backend secrets.BackendID, dataRoot, profile, instance string, passphrase []byte) (secrets.Store, error) {

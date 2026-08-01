@@ -61,12 +61,12 @@ func TestPendingAuthValidation(t *testing.T) {
 
 func TestPendingAuthDeletesExpiredState(t *testing.T) {
 	store := &testSecretStore{values: map[string][]byte{}}
-	store.values[authPendingKey] = []byte(`{"phone":"+90555","phone_code_hash":"hash","created_at":"2000-01-01T00:00:00Z"}`)
+	store.values[AuthPendingSecretKey] = []byte(`{"phone":"+90555","phone_code_hash":"hash","created_at":"2000-01-01T00:00:00Z"}`)
 	app := App{Profile: "main", Secrets: store}
 	if _, err := app.pendingAuth(context.Background()); !errors.Is(err, ErrPendingAuthExpired) {
 		t.Fatalf("pendingAuth error = %v", err)
 	}
-	if _, ok := store.values[authPendingKey]; ok {
+	if _, ok := store.values[AuthPendingSecretKey]; ok {
 		t.Fatal("expired pending auth was retained")
 	}
 }
@@ -81,10 +81,10 @@ func TestResetLocalAuthDeletesEveryLocalAuthArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &testSecretStore{values: map[string][]byte{
-		authPendingKey:            []byte("pending"),
+		AuthPendingSecretKey:      []byte("pending"),
 		telesession.Key:           []byte("legacy"),
 		telesession.EncryptionKey: []byte("key"),
-		apiHashKey:                []byte("keep-me"),
+		APIHashSecretKey:          []byte("keep-me"),
 	}}
 	app := App{Profile: "main", Paths: config.Paths{Data: dir}, Secrets: store}
 	if err := app.ResetLocalAuth(context.Background()); err != nil {
@@ -93,12 +93,12 @@ func TestResetLocalAuthDeletesEveryLocalAuthArtifact(t *testing.T) {
 	if _, err := os.Stat(sessionPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("session still exists: %v", err)
 	}
-	for _, key := range []string{authPendingKey, telesession.Key, telesession.EncryptionKey} {
+	for _, key := range []string{AuthPendingSecretKey, telesession.Key, telesession.EncryptionKey} {
 		if _, ok := store.values[key]; ok {
 			t.Fatalf("auth artifact %q retained", key)
 		}
 	}
-	if string(store.values[apiHashKey]) != "keep-me" {
+	if string(store.values[APIHashSecretKey]) != "keep-me" {
 		t.Fatal("API hash was unexpectedly deleted")
 	}
 }

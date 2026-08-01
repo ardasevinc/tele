@@ -11,8 +11,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ardasevinc/tele/internal/botstore"
 	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/secrets"
+	"github.com/ardasevinc/tele/internal/session"
+	"github.com/ardasevinc/tele/internal/telegram"
 )
 
 func TestSecretsInitAndAPIHashRoundTripOnLinux(t *testing.T) {
@@ -21,6 +24,7 @@ func TestSecretsInitAndAPIHashRoundTripOnLinux(t *testing.T) {
 	}
 	root := t.TempDir()
 	dataHome := filepath.Join(root, "data")
+	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("XDG_DATA_HOME", dataHome)
 	configPath := filepath.Join(root, "config", "tele.toml")
 	passphrasePath := filepath.Join(root, "vault-passphrase")
@@ -170,5 +174,49 @@ func TestVaultPassphraseSourcesAreMutuallyExclusive(t *testing.T) {
 	state := &appState{vaultPassphraseFD: 3, vaultPassphraseFile: "/tmp/credential"}
 	if _, err := state.readVaultPassphrase(false); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("readVaultPassphrase error = %v", err)
+	}
+}
+
+func TestLegacyMigrationSnapshotUsesFixedCatalogWithoutConfiguredBots(t *testing.T) {
+	ctx := context.Background()
+	store := &botCommandStore{values: map[string][]byte{
+		"main:" + telegram.APIHashSecretKey: []byte("api-secret"),
+		"main:" + session.EncryptionKey:     []byte("session-secret"),
+	}}
+	inventory := botstore.New(t.TempDir(), "main")
+	discoverer := &botCommandDiscoverer{}
+	state := &appState{
+		secretStore:        store,
+		ownedBotDiscoverer: discoverer,
+		botInventory:       &inventory,
+	}
+	snapshot, err := state.migrationSnapshot(
+		ctx,
+		secrets.Selection{Backend: secrets.BackendKeychainLegacy},
+		store,
+		"main",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zeroSnapshot(snapshot)
+	if len(snapshot) != 2 || string(snapshot[telegram.APIHashSecretKey]) != "api-secret" ||
+		string(snapshot[session.EncryptionKey]) != "session-secret" {
+		t.Fatalf("snapshot keys=%v", snapshot)
+	}
+	if discoverer.calls != 0 {
+		t.Fatalf("remote discovery ran without a configured bot manager: %d", discoverer.calls)
+	}
+}
+
+func TestMigrationProfileSelectionTracksImplicitAndExplicitSources(t *testing.T) {
+	implicit := config.Profile{}
+	if got := selectionFromProfile(implicit); got != (secrets.Selection{}) || !profileStillSelects(implicit, got) {
+		t.Fatalf("implicit selection = %+v", got)
+	}
+	explicit := config.Profile{Secrets: &config.SecretBackend{Backend: string(secrets.BackendVault), Instance: "instance"}}
+	selection := selectionFromProfile(explicit)
+	if !profileStillSelects(explicit, selection) || profileStillSelects(config.Profile{}, selection) {
+		t.Fatalf("explicit selection agreement failed: %+v", selection)
 	}
 }

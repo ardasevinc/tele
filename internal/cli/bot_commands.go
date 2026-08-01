@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -45,17 +46,22 @@ func botReconcileCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := botfactory.Reconcile(
-				cmd.Context(),
-				s.secrets(),
-				s.botManagerAPI(),
-				s.botTokenAPI(),
-				discoverer,
-				inventory,
-				s.profileName(),
-				backend,
-				botfactory.ReconcileOptions{Imports: imports},
-			)
+			var result botfactory.ReconciliationResult
+			err = s.withProfileSecretLock(cmd.Context(), func(ctx context.Context) error {
+				var reconcileErr error
+				result, reconcileErr = botfactory.Reconcile(
+					ctx,
+					s.secrets(),
+					s.botManagerAPI(),
+					s.botTokenAPI(),
+					discoverer,
+					inventory,
+					s.profileName(),
+					backend,
+					botfactory.ReconcileOptions{Imports: imports},
+				)
+				return reconcileErr
+			})
 			if err != nil {
 				return err
 			}
@@ -193,15 +199,20 @@ func botTokenSyncCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := botfactory.SyncToken(
-				cmd.Context(),
-				inventory,
-				s.secrets(),
-				s.botTokenAPI(),
-				s.profileName(),
-				backend,
-				args[0],
-			)
+			var result botfactory.TokenOperationResult
+			err = s.withProfileSecretLock(cmd.Context(), func(ctx context.Context) error {
+				var operationErr error
+				result, operationErr = botfactory.SyncToken(
+					ctx,
+					inventory,
+					s.secrets(),
+					s.botTokenAPI(),
+					s.profileName(),
+					backend,
+					args[0],
+				)
+				return operationErr
+			})
 			if err != nil {
 				return err
 			}
@@ -234,15 +245,20 @@ func botTokenRotateCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := botfactory.RotateToken(
-				cmd.Context(),
-				inventory,
-				s.secrets(),
-				s.botTokenAPI(),
-				s.profileName(),
-				backend,
-				args[0],
-			)
+			var result botfactory.TokenOperationResult
+			err = s.withProfileSecretLock(cmd.Context(), func(ctx context.Context) error {
+				var operationErr error
+				result, operationErr = botfactory.RotateToken(
+					ctx,
+					inventory,
+					s.secrets(),
+					s.botTokenAPI(),
+					s.profileName(),
+					backend,
+					args[0],
+				)
+				return operationErr
+			})
 			if err != nil {
 				return err
 			}
@@ -303,17 +319,22 @@ func botCreateCommand(s *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := botfactory.Create(
-				cmd.Context(),
-				s.secrets(),
-				s.botTokenAPI(),
-				creator,
-				inventory,
-				s.profileName(),
-				args[0],
-				name,
-				backend,
-			)
+			var result botfactory.CreationResult
+			err = s.withProfileSecretLock(cmd.Context(), func(ctx context.Context) error {
+				var createErr error
+				result, createErr = botfactory.Create(
+					ctx,
+					s.secrets(),
+					s.botTokenAPI(),
+					creator,
+					inventory,
+					s.profileName(),
+					args[0],
+					name,
+					backend,
+				)
+				return createErr
+			})
 			if err != nil {
 				return err
 			}
@@ -410,15 +431,20 @@ func botManagerConfigureCommand(s *appState) *cobra.Command {
 			if !supported {
 				return fmt.Errorf("manager credential requires a supported secret store: %s", backend)
 			}
-			status, err := botfactory.ConfigureManager(
-				cmd.Context(),
-				s.secrets(),
-				s.botManagerAPI(),
-				s.profileName(),
-				args[0],
-				token,
-				backend,
-			)
+			var status botfactory.ManagerStatus
+			err = s.withProfileSecretLock(cmd.Context(), func(ctx context.Context) error {
+				var configureErr error
+				status, configureErr = botfactory.ConfigureManager(
+					ctx,
+					s.secrets(),
+					s.botManagerAPI(),
+					s.profileName(),
+					args[0],
+					token,
+					backend,
+				)
+				return configureErr
+			})
 			if err != nil {
 				return err
 			}

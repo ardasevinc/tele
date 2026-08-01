@@ -21,8 +21,8 @@ import (
 	telesession "github.com/ardasevinc/tele/internal/session"
 )
 
-const apiHashKey = "api-hash"
-const authPendingKey = "auth-pending"
+const APIHashSecretKey = "api-hash"
+const AuthPendingSecretKey = "auth-pending"
 const pendingAuthTTL = 15 * time.Minute
 
 var (
@@ -67,13 +67,17 @@ type authPending struct {
 }
 
 func (a App) SetAPIHash(ctx context.Context, hash string) error {
-	return a.Secrets.Set(ctx, a.Profile, apiHashKey, []byte(strings.TrimSpace(hash)))
+	return a.withProfileLock(ctx, func(ctx context.Context) error {
+		return a.Secrets.Set(ctx, a.Profile, APIHashSecretKey, []byte(strings.TrimSpace(hash)))
+	})
 }
 
 func (a App) ResetLocalAuth(ctx context.Context) error {
-	sessionErr := telesession.EncryptedStorage{Profile: a.Profile, Store: a.Secrets, Path: a.sessionPath()}.Delete(ctx)
-	pendingErr := a.Secrets.Delete(ctx, a.Profile, authPendingKey)
-	return errors.Join(sessionErr, pendingErr)
+	return a.withProfileLock(ctx, func(ctx context.Context) error {
+		sessionErr := telesession.EncryptedStorage{Profile: a.Profile, Store: a.Secrets, Path: a.sessionPath()}.Delete(ctx)
+		pendingErr := a.Secrets.Delete(ctx, a.Profile, AuthPendingSecretKey)
+		return errors.Join(sessionErr, pendingErr)
+	})
 }
 
 func (a App) Login(ctx context.Context, opts LoginOptions) (AuthStatus, error) {
@@ -89,7 +93,7 @@ func (a App) Login(ctx context.Context, opts LoginOptions) (AuthStatus, error) {
 		}
 		status.Authorized = true
 		status.Account = userToAccount(self)
-		return a.Secrets.Delete(ctx, a.Profile, authPendingKey)
+		return a.Secrets.Delete(ctx, a.Profile, AuthPendingSecretKey)
 	})
 	return status, err
 }
@@ -107,7 +111,7 @@ func (a App) AuthStart(ctx context.Context, phone string) (AuthStartStatus, erro
 		}
 		if authStatus != nil && authStatus.Authorized {
 			status.AlreadyAuthorized = true
-			return a.Secrets.Delete(ctx, a.Profile, authPendingKey)
+			return a.Secrets.Delete(ctx, a.Profile, AuthPendingSecretKey)
 		}
 		sent, err := c.Auth().SendCode(ctx, phone, auth.SendCodeOptions{})
 		if err != nil {
@@ -134,6 +138,16 @@ func (a App) AuthStart(ctx context.Context, phone string) (AuthStartStatus, erro
 }
 
 func (a App) AuthComplete(ctx context.Context, code, password string) (AuthStatus, error) {
+	var status AuthStatus
+	err := a.withProfileLock(ctx, func(ctx context.Context) error {
+		var err error
+		status, err = a.authCompleteUnlocked(ctx, code, password)
+		return err
+	})
+	return status, err
+}
+
+func (a App) authCompleteUnlocked(ctx context.Context, code, password string) (AuthStatus, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return AuthStatus{}, fmt.Errorf("code is required")
@@ -161,7 +175,7 @@ func (a App) AuthComplete(ctx context.Context, code, password string) (AuthStatu
 			return err
 		}
 		status = statusFromGotd(a.Profile, s)
-		return a.Secrets.Delete(ctx, a.Profile, authPendingKey)
+		return a.Secrets.Delete(ctx, a.Profile, AuthPendingSecretKey)
 	})
 	return status, err
 }
@@ -185,18 +199,20 @@ func (a App) Status(ctx context.Context) (AuthStatus, error) {
 }
 
 func (a App) LogoutRemote(ctx context.Context) error {
-	err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
-		_, err := c.API().AuthLogOut(ctx)
-		return err
+	return a.withProfileLock(ctx, func(ctx context.Context) error {
+		err := a.Run(ctx, func(ctx context.Context, c *telegram.Client) error {
+			_, err := c.API().AuthLogOut(ctx)
+			return err
+		})
+		if err != nil && !auth.IsUnauthorized(err) {
+			return err
+		}
+		return a.Secrets.Delete(ctx, a.Profile, AuthPendingSecretKey)
 	})
-	if err != nil && !auth.IsUnauthorized(err) {
-		return err
-	}
-	return a.Secrets.Delete(ctx, a.Profile, authPendingKey)
 }
 
 func (a App) pendingAuth(ctx context.Context) (authPending, error) {
-	b, err := a.Secrets.Get(ctx, a.Profile, authPendingKey)
+	b, err := a.Secrets.Get(ctx, a.Profile, AuthPendingSecretKey)
 	if errors.Is(err, secrets.ErrNotFound) {
 		return authPending{}, fmt.Errorf("no pending auth; run tele auth start first")
 	}
@@ -205,7 +221,7 @@ func (a App) pendingAuth(ctx context.Context) (authPending, error) {
 	}
 	pending, err := parsePendingAuth(b, time.Now())
 	if err != nil {
-		if deleteErr := a.Secrets.Delete(ctx, a.Profile, authPendingKey); deleteErr != nil {
+		if deleteErr := a.Secrets.Delete(ctx, a.Profile, AuthPendingSecretKey); deleteErr != nil {
 			return authPending{}, errors.Join(err, deleteErr)
 		}
 		return authPending{}, err
@@ -233,7 +249,7 @@ func (a App) savePendingAuth(ctx context.Context, pending authPending) error {
 	if err != nil {
 		return err
 	}
-	return a.Secrets.Set(ctx, a.Profile, authPendingKey, b)
+	return a.Secrets.Set(ctx, a.Profile, AuthPendingSecretKey, b)
 }
 
 func statusFromGotd(profile string, s *auth.Status) AuthStatus {

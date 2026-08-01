@@ -79,7 +79,9 @@ jobs:
       - name: Test real Keychain lifecycle
         env:
           GOPROXY: "off"
-        run: go test -tags=keychainintegration ./internal/secrets -run TestNativeKeychainRealLifecycle -count=1
+        run: |
+          go test -tags=keychainintegration ./internal/secrets -run TestNativeKeychainRealLifecycle -count=1
+          go test -tags=keychainintegration ./internal/cli -run TestLegacyKeychainMigrationRealLifecycle -count=1
 
   lint-security:
     name: Lint and security

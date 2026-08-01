@@ -2,6 +2,6 @@
 
 package secrets
 
-func openLegacyKeychain() (Store, error) {
-	return KeychainStore{}, nil
+func openLegacyKeychain(dataRoot string) (Store, error) {
+	return KeychainStore{dataRoot: dataRoot}, nil
 }

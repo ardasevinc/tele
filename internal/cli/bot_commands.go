@@ -19,7 +19,64 @@ func botsCommand(s *appState) *cobra.Command {
 	cmd.AddCommand(botManagerCommand(s))
 	cmd.AddCommand(botUsernameCommand(s))
 	cmd.AddCommand(botCreateCommand(s))
-	cmd.AddCommand(botListCommand(s), botInspectCommand(s), botTokenCommand(s))
+	cmd.AddCommand(botListCommand(s), botInspectCommand(s), botReconcileCommand(s), botTokenCommand(s))
+	return cmd
+}
+
+func botReconcileCommand(s *appState) *cobra.Command {
+	var imports []string
+	cmd := &cobra.Command{
+		Use:   "reconcile",
+		Short: "Compare Telegram-owned bots with the local inventory",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if s.dryRun {
+				return fmt.Errorf("--dry-run is not supported for bots reconcile; omit --import for discovery-only remote access")
+			}
+			backend, supported := s.secretBackendInfo()
+			if !supported {
+				return fmt.Errorf("managed bot credentials require a supported secret store: %s", backend)
+			}
+			discoverer, err := s.botDiscoverer()
+			if err != nil {
+				return err
+			}
+			inventory, err := s.botsStore()
+			if err != nil {
+				return err
+			}
+			result, err := botfactory.Reconcile(
+				cmd.Context(),
+				s.secrets(),
+				s.botManagerAPI(),
+				s.botTokenAPI(),
+				discoverer,
+				inventory,
+				s.profileName(),
+				backend,
+				botfactory.ReconcileOptions{Imports: imports},
+			)
+			if err != nil {
+				return err
+			}
+			return writeValue(s, result, func(w output.Writer) error {
+				catalogState := "complete"
+				if !result.Complete {
+					catalogState = "incomplete"
+				}
+				return w.Print(fmt.Sprintf(
+					"[profile %s] reconciled %d owned bots: %d matched, %d proposed, %d tombstoned; managed-secret catalog %s",
+					safeHuman(s.profileName()),
+					len(result.RemoteOwned),
+					len(result.Matched),
+					len(result.Proposed),
+					len(result.Tombstoned),
+					catalogState,
+				))
+			})
+		},
+	}
+	cmd.Flags().StringArrayVar(&imports, "import", nil, "import a manager-controlled owned bot (repeatable; accepts @username, ID, or bot:<id>)")
 	return cmd
 }
 

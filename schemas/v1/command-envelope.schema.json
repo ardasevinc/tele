@@ -161,6 +161,12 @@
             "meta": { "$ref": "#/$defs/bot-token-command" },
             "data": { "$ref": "#/$defs/bot-token-operation-result" }
           }
+        },
+        {
+          "properties": {
+            "meta": { "$ref": "#/$defs/bot-reconcile-command" },
+            "data": { "$ref": "#/$defs/bot-reconciliation-result" }
+          }
         }
       ]
     }
@@ -263,6 +269,9 @@
         { "$ref": "#/$defs/command-meta" },
         { "properties": { "command": { "enum": ["tele bots token rotate", "tele bots token sync"] } } }
       ]
+    },
+    "bot-reconcile-command": {
+      "allOf": [{ "$ref": "#/$defs/command-meta" }, { "properties": { "command": { "const": "tele bots reconcile" } } }]
     },
     "account": {
       "type": "object",
@@ -539,7 +548,9 @@
         "manager_username": { "type": "string", "minLength": 1 },
         "created_at": { "type": "string", "format": "date-time" },
         "updated_at": { "type": "string", "format": "date-time" },
-        "token_synced_at": { "type": "string", "format": "date-time" }
+        "token_synced_at": { "type": "string", "format": "date-time" },
+        "remote_checked_at": { "type": "string", "format": "date-time" },
+        "tombstoned_at": { "type": "string", "format": "date-time" }
       },
       "additionalProperties": false
     },
@@ -629,8 +640,41 @@
 		"status": { "enum": ["pass", "warning", "failed", "skipped"] },
 		"message": { "type": "string", "minLength": 1 },
 		"details": { "type": "object" }
-	  },
-	  "additionalProperties": false
+      },
+      "additionalProperties": false
+    },
+    "discovered-bot": {
+      "type": "object",
+      "required": ["ref", "id", "username", "name", "managed_by_configured_manager", "importable"],
+      "properties": {
+        "ref": { "type": "string", "pattern": "^bot:[0-9]+$" },
+        "id": { "type": "integer", "minimum": 1 },
+        "username": { "type": "string", "minLength": 5, "maxLength": 32 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "manager_id": { "type": "integer", "minimum": 1 },
+        "managed_by_configured_manager": { "type": "boolean" },
+        "importable": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "bot-reconciliation-result": {
+      "type": "object",
+      "required": ["ok", "complete", "manager", "checked_at", "remote_owned", "matched", "tombstoned", "proposed", "imported", "tokens_synchronized", "pending_import_ids", "missing_token_ids"],
+      "properties": {
+        "ok": { "const": true },
+        "complete": { "type": "boolean" },
+        "manager": { "$ref": "#/$defs/bot-manager-status" },
+        "checked_at": { "type": "string", "format": "date-time" },
+        "remote_owned": { "type": "array", "items": { "$ref": "#/$defs/discovered-bot" } },
+        "matched": { "type": "array", "items": { "$ref": "#/$defs/bot-receipt" } },
+        "tombstoned": { "type": "array", "items": { "$ref": "#/$defs/bot-receipt" } },
+        "proposed": { "type": "array", "items": { "$ref": "#/$defs/discovered-bot" } },
+        "imported": { "type": "array", "items": { "$ref": "#/$defs/bot-receipt" } },
+        "tokens_synchronized": { "type": "array", "items": { "$ref": "#/$defs/bot-receipt" } },
+        "pending_import_ids": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "uniqueItems": true },
+        "missing_token_ids": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "uniqueItems": true }
+      },
+      "additionalProperties": false
     }
   }
 }

@@ -143,6 +143,16 @@ type botCommandCreator struct {
 	options telegram.ManagedBotCreateOptions
 }
 
+type botCommandDiscoverer struct {
+	bots  []telegram.OwnedBot
+	calls int
+}
+
+func (d *botCommandDiscoverer) ListOwnedBots(context.Context) ([]telegram.OwnedBot, error) {
+	d.calls++
+	return append([]telegram.OwnedBot(nil), d.bots...), nil
+}
+
 func (c *botCommandCreator) CreateManagedBot(
 	_ context.Context,
 	options telegram.ManagedBotCreateOptions,
@@ -250,6 +260,80 @@ func TestBotsCreateRejectsSafetyModes(t *testing.T) {
 		if err := executeWithState(context.Background(), args, state); err == nil {
 			t.Fatalf("accepted args %v", args)
 		}
+	}
+}
+
+func TestBotsReconcileProposesThenExplicitlyImportsWithoutLeakingTokens(t *testing.T) {
+	const managerToken = "7:manager-secret"
+	const childToken = "42:child-secret"
+	ctx := context.Background()
+	var stdout, stderr bytes.Buffer
+	store := &botCommandStore{values: map[string][]byte{}}
+	managerAPI := &botCommandAPI{bot: botapi.Bot{
+		ID: 7, IsBot: true, Username: "ManagerBot", CanManageBots: true,
+	}}
+	if _, err := botfactory.ConfigureManager(
+		ctx, store, managerAPI, "default", "ManagerBot", managerToken, "test keychain",
+	); err != nil {
+		t.Fatal(err)
+	}
+	discoverer := &botCommandDiscoverer{bots: []telegram.OwnedBot{
+		{ID: 42, AccessHash: 99, Username: "FactoryChildBot", Name: "Factory Child", ManagerID: 7},
+		{ID: 88, AccessHash: 98, Username: "UnmanagedBot", Name: "Unmanaged", ManagerID: 8},
+	}}
+	tokenAPI := &botCommandTokenAPI{token: childToken}
+	inventory := botstore.New(t.TempDir(), "default")
+	state := &appState{
+		in:                      strings.NewReader(""),
+		out:                     &stdout,
+		err:                     &stderr,
+		secretStore:             store,
+		secretBackend:           "test keychain",
+		secretBackendSupported:  true,
+		secretBackendConfigured: true,
+		managerAPI:              managerAPI,
+		managedTokenAPI:         tokenAPI,
+		ownedBotDiscoverer:      discoverer,
+		botInventory:            &inventory,
+	}
+	configPath := t.TempDir() + "/config.toml"
+	if err := executeWithState(ctx, []string{
+		"--json", "--config", configPath, "bots", "reconcile",
+	}, state); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), `"complete": false`) ||
+		!strings.Contains(stdout.String(), `"pending_import_ids": [`) || tokenAPI.getCalls != 0 {
+		t.Fatalf("discovery output=%s token_calls=%d", stdout.String(), tokenAPI.getCalls)
+	}
+	stdout.Reset()
+	if err := executeWithState(ctx, []string{
+		"--json", "--config", configPath, "bots", "reconcile", "--import", "@FactoryChildBot",
+	}, state); err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String() + stderr.String()
+	if !strings.Contains(stdout.String(), `"complete": true`) ||
+		!strings.Contains(stdout.String(), `"username": "FactoryChildBot"`) || tokenAPI.getCalls != 1 {
+		t.Fatalf("import output=%s token_calls=%d", stdout.String(), tokenAPI.getCalls)
+	}
+	for _, token := range []string{managerToken, childToken} {
+		if strings.Contains(output, token) {
+			t.Fatalf("reconcile leaked token: %s", output)
+		}
+	}
+	if _, err := inventory.Resolve("FactoryChildBot"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inventory.Resolve("UnmanagedBot"); err == nil {
+		t.Fatal("reconcile silently imported a bot controlled by another manager")
+	}
+}
+
+func TestBotsReconcileRejectsDryRun(t *testing.T) {
+	state := &appState{in: strings.NewReader(""), out: &bytes.Buffer{}, err: &bytes.Buffer{}}
+	if err := executeWithState(context.Background(), []string{"--dry-run", "bots", "reconcile"}, state); err == nil {
+		t.Fatal("bots reconcile accepted dry-run")
 	}
 }
 

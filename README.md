@@ -120,14 +120,23 @@ Create and inspect a managed bot:
 ```sh
 tele bots username check ExampleWorkerBot
 tele bots create ExampleWorkerBot --name "Example Worker"
+tele bots reconcile
+tele bots reconcile --import @ExampleWorkerBot
 tele bots list
 tele bots inspect @ExampleWorkerBot
 ```
 
-`bots list` is a local inventory, not a remote enumeration of every bot owned by
-the account. It lives at `~/.local/share/tele/<profile>/bots.json`, uses private
-atomic writes, and contains bot identity and reconciliation metadata but no
-tokens.
+`bots reconcile` reads Telegram's owned-bot catalog and compares it with local
+state. Remote-only bots are proposed, never silently added. Repeat `--import`
+to accept specific bots controlled by the configured manager; their current
+tokens are retrieved without rotation. Local-only entries become tombstones,
+not deletions. Bots controlled by another manager remain discoverable but are
+not assigned fabricated manager or token state. Telegram exposes no matching
+remote deletion operation here, so Tele does not claim one.
+
+`bots list` reads the reconciled local inventory. It lives at
+`~/.local/share/tele/<profile>/bots.json`, uses private atomic writes, and
+contains bot identity and reconciliation metadata but no tokens.
 
 Synchronize the current remote token non-destructively, or explicitly rotate it:
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +21,11 @@ type botUsernameAPI interface {
 type botCreationAPI interface {
 	BotsCheckUsername(context.Context, string) (bool, error)
 	BotsCreateBot(context.Context, *tg.BotsCreateBotRequest) (tg.UserClass, error)
+}
+
+type ownedBotsAPI interface {
+	BotsGetAdminedBots(context.Context) ([]tg.UserClass, error)
+	UsersGetFullUser(context.Context, tg.InputUserClass) (*tg.UsersUserFull, error)
 }
 
 type BotUsernameCheck struct {
@@ -42,6 +48,14 @@ type ManagedBot struct {
 	Name            string `json:"name"`
 	ManagerID       int64  `json:"manager_id"`
 	ManagerUsername string `json:"manager_username"`
+}
+
+type OwnedBot struct {
+	ID         int64  `json:"id"`
+	AccessHash int64  `json:"-"`
+	Username   string `json:"username"`
+	Name       string `json:"name"`
+	ManagerID  int64  `json:"manager_id,omitempty"`
 }
 
 type botCreationAttempt struct {
@@ -78,6 +92,80 @@ func (a App) CheckBotUsername(ctx context.Context, value string) (BotUsernameChe
 		return err
 	})
 	return result, err
+}
+
+func (a App) ListOwnedBots(ctx context.Context) ([]OwnedBot, error) {
+	var result []OwnedBot
+	err := a.Run(ctx, func(ctx context.Context, client *telegram.Client) error {
+		var err error
+		result, err = listOwnedBots(ctx, client.API())
+		return err
+	})
+	return result, err
+}
+
+func listOwnedBots(ctx context.Context, api ownedBotsAPI) ([]OwnedBot, error) {
+	users, err := api.BotsGetAdminedBots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]OwnedBot, 0, len(users))
+	seenIDs := make(map[int64]struct{}, len(users))
+	seenUsernames := make(map[string]struct{}, len(users))
+	for _, class := range users {
+		user, ok := class.(*tg.User)
+		if !ok || user.ID == 0 || !user.Bot {
+			return nil, fmt.Errorf("telegram returned an invalid owned-bot identity")
+		}
+		username, ok := user.GetUsername()
+		username = strings.TrimSpace(username)
+		if !ok || username == "" {
+			return nil, fmt.Errorf("owned bot %d has no username", user.ID)
+		}
+		accessHash, ok := user.GetAccessHash()
+		if !ok {
+			return nil, fmt.Errorf("owned bot @%s has no access hash", username)
+		}
+		usernameKey := strings.ToLower(username)
+		if _, exists := seenIDs[user.ID]; exists {
+			return nil, fmt.Errorf("telegram returned duplicate owned bot ID %d", user.ID)
+		}
+		if _, exists := seenUsernames[usernameKey]; exists {
+			return nil, fmt.Errorf("telegram returned duplicate owned bot username @%s", username)
+		}
+		seenIDs[user.ID] = struct{}{}
+		seenUsernames[usernameKey] = struct{}{}
+
+		full, err := api.UsersGetFullUser(ctx, &tg.InputUser{UserID: user.ID, AccessHash: accessHash})
+		if err != nil {
+			return nil, fmt.Errorf("inspect owned bot @%s: %w", username, err)
+		}
+		if full == nil || full.FullUser.ID != user.ID {
+			return nil, fmt.Errorf("telegram returned mismatched full identity for @%s", username)
+		}
+		managerID, _ := full.FullUser.GetBotManagerID()
+		result = append(result, OwnedBot{
+			ID:         user.ID,
+			AccessHash: accessHash,
+			Username:   username,
+			Name:       userDisplayName(user, username),
+			ManagerID:  managerID,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return strings.ToLower(result[i].Username) < strings.ToLower(result[j].Username)
+	})
+	return result, nil
+}
+
+func userDisplayName(user *tg.User, fallback string) string {
+	first, _ := user.GetFirstName()
+	last, _ := user.GetLastName()
+	name := strings.TrimSpace(strings.TrimSpace(first) + " " + strings.TrimSpace(last))
+	if name == "" {
+		return fallback
+	}
+	return name
 }
 
 func checkBotUsername(

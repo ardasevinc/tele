@@ -20,15 +20,17 @@ type InventoryStore interface {
 }
 
 type BotReceipt struct {
-	Ref             string    `json:"ref"`
-	ID              int64     `json:"id"`
-	Username        string    `json:"username"`
-	Name            string    `json:"name"`
-	ManagerID       int64     `json:"manager_id"`
-	ManagerUsername string    `json:"manager_username"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	TokenSyncedAt   time.Time `json:"token_synced_at,omitempty"`
+	Ref             string     `json:"ref"`
+	ID              int64      `json:"id"`
+	Username        string     `json:"username"`
+	Name            string     `json:"name"`
+	ManagerID       int64      `json:"manager_id"`
+	ManagerUsername string     `json:"manager_username"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	TokenSyncedAt   time.Time  `json:"token_synced_at,omitempty"`
+	RemoteCheckedAt *time.Time `json:"remote_checked_at,omitempty"`
+	TombstonedAt    *time.Time `json:"tombstoned_at,omitempty"`
 }
 
 type TokenReceipt struct {
@@ -131,6 +133,8 @@ func PublicBot(bot botstore.Bot) BotReceipt {
 		CreatedAt:       bot.CreatedAt,
 		UpdatedAt:       bot.UpdatedAt,
 		TokenSyncedAt:   bot.TokenSyncedAt,
+		RemoteCheckedAt: bot.RemoteCheckedAt,
+		TombstonedAt:    bot.TombstonedAt,
 	}
 }
 

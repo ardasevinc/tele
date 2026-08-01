@@ -43,7 +43,8 @@
         { "$ref": "command-envelope.schema.json#/$defs/bot-creation-result" },
         { "$ref": "command-envelope.schema.json#/$defs/managed-bot-status" },
         { "type": "array", "items": { "$ref": "command-envelope.schema.json#/$defs/managed-bot-status" } },
-        { "$ref": "command-envelope.schema.json#/$defs/bot-token-operation-result" }
+        { "$ref": "command-envelope.schema.json#/$defs/bot-token-operation-result" },
+        { "$ref": "command-envelope.schema.json#/$defs/bot-reconciliation-result" }
       ]
     }
   },

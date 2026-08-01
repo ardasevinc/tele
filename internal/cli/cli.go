@@ -78,6 +78,7 @@ type appState struct {
 	managerAPI              botapi.ManagerAPI
 	managedTokenAPI         botapi.ManagedTokenAPI
 	managedBotCreator       botfactory.ManagedBotCreator
+	ownedBotDiscoverer      botfactory.OwnedBotDiscoverer
 	botInventory            *botstore.Store
 
 	in  io.Reader
@@ -308,6 +309,17 @@ func (s *appState) botTokenAPI() botapi.ManagedTokenAPI {
 func (s *appState) botCreator() (botfactory.ManagedBotCreator, error) {
 	if s.managedBotCreator != nil {
 		return s.managedBotCreator, nil
+	}
+	app, err := s.telegramApp()
+	if err != nil {
+		return nil, err
+	}
+	return app, nil
+}
+
+func (s *appState) botDiscoverer() (botfactory.OwnedBotDiscoverer, error) {
+	if s.ownedBotDiscoverer != nil {
+		return s.ownedBotDiscoverer, nil
 	}
 	app, err := s.telegramApp()
 	if err != nil {

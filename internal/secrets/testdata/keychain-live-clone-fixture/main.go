@@ -58,7 +58,14 @@ func main() {
 		must(target.Set(ctx, targetProfile, key, value))
 	}
 
-	sessionBytes, err := os.ReadFile(sourceSession)
+	sessionRoot, err := os.OpenRoot(filepath.Dir(sourceSession))
+	must(err)
+	defer sessionRoot.Close()
+	sessionName := filepath.Base(sourceSession)
+	if sessionName == "." || sessionName == string(filepath.Separator) {
+		fatal("source session must name a file")
+	}
+	sessionBytes, err := sessionRoot.ReadFile(sessionName)
 	must(err)
 	defer zero(sessionBytes)
 	targetSession := filepath.Join(targetData, targetProfile, "session.enc")

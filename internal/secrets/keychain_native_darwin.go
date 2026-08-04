@@ -8,47 +8,51 @@ import (
 	"sync"
 
 	"github.com/ebitengine/purego"
+
+	"github.com/ardasevinc/tele/internal/buildtrust"
 )
 
 const nativeKeychainService = "tele-v1"
 
 type securityFrameworkKeychain struct {
-	cfRelease                  func(uintptr)
-	cfStringCreate             func(uintptr, string, uint32) uintptr
-	cfDataCreate               func(uintptr, *byte, int64) uintptr
-	cfDataGetLength            func(uintptr) int64
-	cfDataGetBytePtr           func(uintptr) *byte
-	cfDataGetTypeID            func() uintptr
-	cfGetTypeID                func(uintptr) uintptr
-	cfArrayCreate              func(uintptr, *uintptr, int64, uintptr) uintptr
-	cfArrayGetCount            func(uintptr) int64
-	cfArrayGetValueAtIndex     func(uintptr, int64) uintptr
-	cfDictionaryCreate         func(uintptr, *uintptr, *uintptr, int64, uintptr, uintptr) uintptr
-	secItemAdd                 func(uintptr, *uintptr) int32
-	secItemUpdate              func(uintptr, uintptr) int32
-	secItemCopyMatching        func(uintptr, *uintptr) int32
-	secItemDelete              func(uintptr) int32
-	secAccessCreate            func(uintptr, uintptr, *uintptr) int32
-	secAccessCopyMatchingACLs  func(uintptr, uintptr) uintptr
-	secACLSetContents          func(uintptr, uintptr, uintptr, uint16) int32
-	secTrustedAppCreate        func(*byte, *uintptr) int32
-	arrayCallbacks             uintptr
-	dictionaryKeyCallbacks     uintptr
-	dictionaryValueCallbacks   uintptr
-	secClass                   uintptr
-	secClassGenericPassword    uintptr
-	secAttrService             uintptr
-	secAttrAccount             uintptr
-	secAttrAccess              uintptr
-	secValueData               uintptr
-	secReturnData              uintptr
-	secMatchLimit              uintptr
-	secMatchLimitOne           uintptr
-	secUseAuthenticationUI     uintptr
-	secUseAuthenticationUIFail uintptr
-	secAuthorizationChangeACL  uintptr
-	cfBooleanTrue              uintptr
-	copyBytes                  func(*byte, *byte, uintptr) *byte
+	cfRelease                          func(uintptr)
+	cfStringCreate                     func(uintptr, string, uint32) uintptr
+	cfDataCreate                       func(uintptr, *byte, int64) uintptr
+	cfDataGetLength                    func(uintptr) int64
+	cfDataGetBytePtr                   func(uintptr) *byte
+	cfDataGetTypeID                    func() uintptr
+	cfGetTypeID                        func(uintptr) uintptr
+	cfArrayCreate                      func(uintptr, *uintptr, int64, uintptr) uintptr
+	cfArrayGetCount                    func(uintptr) int64
+	cfArrayGetValueAtIndex             func(uintptr, int64) uintptr
+	cfDictionaryCreate                 func(uintptr, *uintptr, *uintptr, int64, uintptr, uintptr) uintptr
+	secItemAdd                         func(uintptr, *uintptr) int32
+	secItemUpdate                      func(uintptr, uintptr) int32
+	secItemCopyMatching                func(uintptr, *uintptr) int32
+	secItemDelete                      func(uintptr) int32
+	secAccessCreate                    func(uintptr, uintptr, *uintptr) int32
+	secAccessCopyMatchingACLs          func(uintptr, uintptr) uintptr
+	secACLSetContents                  func(uintptr, uintptr, uintptr, uint16) int32
+	secRequirementCreate               func(uintptr, uint32, *uintptr) int32
+	secTrustedAppCreateFromPath        func(*byte, *uintptr) int32
+	secTrustedAppCreateFromRequirement func(*byte, uintptr, *uintptr) int32
+	arrayCallbacks                     uintptr
+	dictionaryKeyCallbacks             uintptr
+	dictionaryValueCallbacks           uintptr
+	secClass                           uintptr
+	secClassGenericPassword            uintptr
+	secAttrService                     uintptr
+	secAttrAccount                     uintptr
+	secAttrAccess                      uintptr
+	secValueData                       uintptr
+	secReturnData                      uintptr
+	secMatchLimit                      uintptr
+	secMatchLimitOne                   uintptr
+	secUseAuthenticationUI             uintptr
+	secUseAuthenticationUIFail         uintptr
+	secAuthorizationChangeACL          uintptr
+	cfBooleanTrue                      uintptr
+	copyBytes                          func(*byte, *byte, uintptr) *byte
 }
 
 var (
@@ -101,7 +105,9 @@ func loadSecurityFrameworkKeychain() (*securityFrameworkKeychain, error) {
 		{security, "SecAccessCreate", &api.secAccessCreate},
 		{security, "SecAccessCopyMatchingACLList", &api.secAccessCopyMatchingACLs},
 		{security, "SecACLSetContents", &api.secACLSetContents},
-		{security, "SecTrustedApplicationCreateFromPath", &api.secTrustedAppCreate},
+		{security, "SecRequirementCreateWithString", &api.secRequirementCreate},
+		{security, "SecTrustedApplicationCreateFromPath", &api.secTrustedAppCreateFromPath},
+		{security, "SecTrustedApplicationCreateFromRequirement", &api.secTrustedAppCreateFromRequirement},
 		{purego.RTLD_DEFAULT, "memcpy", &copyReference},
 		{purego.RTLD_DEFAULT, "memcpy", &api.copyBytes},
 	}
@@ -360,12 +366,9 @@ func (s *securityFrameworkKeychain) newItemAccess(account string) (uintptr, erro
 		return 0, err
 	}
 	defer s.cfRelease(descriptor)
-	var trustedApplication uintptr
-	if status := s.secTrustedAppCreate(nil, &trustedApplication); status != 0 {
-		return 0, fmt.Errorf("SecTrustedApplicationCreateFromPath failed: security framework status %d", status)
-	}
-	if trustedApplication == 0 {
-		return 0, fmt.Errorf("SecTrustedApplicationCreateFromPath returned nil application")
+	trustedApplication, err := s.newTrustedApplication()
+	if err != nil {
+		return 0, err
 	}
 	defer s.cfRelease(trustedApplication)
 	trustedApplications := s.cfArrayCreate(0, &trustedApplication, 1, s.arrayCallbacks)
@@ -400,6 +403,41 @@ func (s *securityFrameworkKeychain) newItemAccess(account string) (uintptr, erro
 		return 0, fmt.Errorf("SecACLSetContents failed: security framework status %d", status)
 	}
 	return access, nil
+}
+
+func (s *securityFrameworkKeychain) newTrustedApplication() (uintptr, error) {
+	if err := buildtrust.VerifyOfficial(); err != nil {
+		var trustedApplication uintptr
+		if status := s.secTrustedAppCreateFromPath(nil, &trustedApplication); status != 0 {
+			return 0, fmt.Errorf("SecTrustedApplicationCreateFromPath failed: security framework status %d", status)
+		}
+		if trustedApplication == 0 {
+			return 0, fmt.Errorf("SecTrustedApplicationCreateFromPath returned nil application")
+		}
+		return trustedApplication, nil
+	}
+
+	requirementText, err := s.newString(buildtrust.Requirement)
+	if err != nil {
+		return 0, err
+	}
+	defer s.cfRelease(requirementText)
+	var requirement uintptr
+	if status := s.secRequirementCreate(requirementText, 0, &requirement); status != 0 {
+		return 0, fmt.Errorf("SecRequirementCreateWithString failed: security framework status %d", status)
+	}
+	if requirement == 0 {
+		return 0, fmt.Errorf("SecRequirementCreateWithString returned nil requirement")
+	}
+	defer s.cfRelease(requirement)
+	var trustedApplication uintptr
+	if status := s.secTrustedAppCreateFromRequirement(nil, requirement, &trustedApplication); status != 0 {
+		return 0, fmt.Errorf("SecTrustedApplicationCreateFromRequirement failed: security framework status %d", status)
+	}
+	if trustedApplication == 0 {
+		return 0, fmt.Errorf("SecTrustedApplicationCreateFromRequirement returned nil application")
+	}
+	return trustedApplication, nil
 }
 
 func (s *securityFrameworkKeychain) newString(value string) (uintptr, error) {

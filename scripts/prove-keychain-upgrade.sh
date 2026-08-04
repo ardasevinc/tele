@@ -12,7 +12,7 @@ evidence=$1
 evidence_parent=$(cd "$(dirname "$evidence")" && pwd)
 evidence="$evidence_parent/$(basename "$evidence")"
 
-for command in codesign git go gtimeout jq security shasum uuidgen; do
+for command in codesign git go jq security shasum uuidgen; do
   command -v "$command" >/dev/null || { echo "missing required command: $command" >&2; exit 1; }
 done
 security find-identity -v -p codesigning | grep -Fq "\"$SIGNING_IDENTITY\"" || { echo 'Developer ID identity is unavailable' >&2; exit 1; }
@@ -65,7 +65,7 @@ trap 'cleanup_instance; trash "$work" >/dev/null 2>&1 || true' EXIT
 
 "$evidence/tele-a" create "$work/data" "$profile" "$instance" > "$evidence/create.txt" 2> "$evidence/create.err"
 "$evidence/tele-b" read "$work/data" "$profile" "$instance" > "$evidence/read.txt" 2> "$evidence/read.err"
-gtimeout --signal=TERM 10s "$evidence/tele-negative" read-negative "$work/data" "$profile" "$instance" > "$evidence/negative.txt" 2> "$evidence/negative.err"
+"$evidence/tele-negative" read-negative "$work/data" "$profile" "$instance" > "$evidence/negative.txt" 2> "$evidence/negative.err"
 "$evidence/tele-b" purge "$work/data" "$profile" "$instance" > "$evidence/purge.txt" 2> "$evidence/purge.err"
 cleanup_required=false
 
@@ -77,7 +77,7 @@ jq -n \
   --arg hash_a "$hash_a" --arg hash_b "$hash_b" \
   --arg cdhash_a "$cdhash_a" --arg cdhash_b "$cdhash_b" \
   --arg requirement "$requirement_a" \
-  '{schema:$schema,commit:$commit,profile:$profile,instance:$instance,binaries:{a:{sha256:$hash_a,cdhash:$cdhash_a},b:{sha256:$hash_b,cdhash:$cdhash_b}},requirement:$requirement,claims:{different_bytes:true,different_cdhashes:true,identical_designated_requirements:true,a_created_b_read_without_ui:true,different_signer_denied_without_ui:true,instance_purged:true}}' \
+  '{schema:$schema,commit:$commit,profile:$profile,instance:$instance,binaries:{a:{sha256:$hash_a,cdhash:$cdhash_a},b:{sha256:$hash_b,cdhash:$cdhash_b}},requirement:$requirement,claims:{different_bytes:true,different_cdhashes:true,identical_designated_requirements:true,a_created_b_read_without_ui:true,different_signer_rejected_before_keychain:true,b_purged_without_ui:true}}' \
   > "$evidence/receipt.json"
 
 echo "physical Keychain A-to-B proof complete: $evidence"

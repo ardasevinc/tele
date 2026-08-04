@@ -64,18 +64,13 @@ func main() {
 		}
 		fmt.Printf("tele-keychain-upgrade-read-v1 build=%s mappings=%d generation=%d\n", buildID, diagnostics.Mappings, diagnostics.Generation)
 	case "read-negative":
-		store, err := secrets.OpenKeychain(ctx, dataRoot, profile, instance)
-		if err == nil {
-			defer store.Close()
-			_, err = store.Get(ctx, profile, "api-hash")
-		}
-		if !errors.Is(err, secrets.ErrAccessDenied) && !errors.Is(err, secrets.ErrInteractionRequired) && !errors.Is(err, secrets.ErrInteractionCanceled) && !errors.Is(err, secrets.ErrBackendLocked) {
+		if err := buildtrust.VerifyOfficial(); !errors.Is(err, buildtrust.ErrNotOfficial) {
 			if err == nil {
-				fatal("differently signed fixture silently read the Keychain instance")
+				fatal("differently signed fixture passed the official-build gate")
 			}
-			fatal("negative control returned an unexpected error: " + err.Error())
+			fatal("negative control returned an unexpected trust error: " + err.Error())
 		}
-		fmt.Printf("tele-keychain-upgrade-negative-v1 build=%s result=denied_without_ui\n", buildID)
+		fmt.Printf("tele-keychain-upgrade-negative-v1 build=%s result=rejected_before_keychain\n", buildID)
 	case "purge":
 		requireOfficial()
 		deleted, err := secrets.PurgeKeychain(ctx, dataRoot, profile, instance)

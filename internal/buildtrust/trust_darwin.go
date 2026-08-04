@@ -119,7 +119,7 @@ func verifyCode(path string) error {
 			return fmt.Errorf("%w: candidate is not a regular non-symlink file", ErrNotOfficial)
 		}
 		pathBytes := []byte(absolute)
-		url := cfURLCreateFromFileSystemRepresentation(0, unsafe.SliceData(pathBytes), int64(len(pathBytes)), 0)
+		url := cfURLCreateFromFileSystemRepresentation(0, unsafe.SliceData(pathBytes), int64(len(pathBytes)), 0) // #nosec G103 -- CoreFoundation copies this live byte slice synchronously.
 		if url == 0 {
 			return fmt.Errorf("create candidate URL")
 		}

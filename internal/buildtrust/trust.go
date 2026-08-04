@@ -9,6 +9,6 @@ const (
 )
 
 var (
-	ErrNotOfficial  = errors.New("Tele build does not satisfy the official signing requirement")
-	ErrNotNotarized = errors.New("Tele build does not satisfy Apple's notarization requirement")
+	ErrNotOfficial  = errors.New("tele build does not satisfy the official signing requirement")
+	ErrNotNotarized = errors.New("tele build does not satisfy Apple's notarization requirement")
 )

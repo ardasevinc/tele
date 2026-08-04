@@ -160,7 +160,11 @@ func archiveEntry(t *testing.T, path, name string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer zipper.Close()
+	defer func() {
+		if err := zipper.Close(); err != nil {
+			t.Errorf("close archive: %v", err)
+		}
+	}()
 	archive := tar.NewReader(zipper)
 	for {
 		header, err := archive.Next()

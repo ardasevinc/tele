@@ -145,10 +145,10 @@ shasum -a 256 "$evidence/tele-b" "$binary_b" > "$evidence/b-byte-comparison.txt"
 cmp "$binary_b" "$evidence/tele-b"
 "$binary_b" internal official-build > "$evidence/b-official.txt"
 "$binary_b" --json --read-only --timeout 30s --config "$target_config" --profile "$target_profile" doctor --connect > "$evidence/doctor.json"
-jq -e '.ok == true and .data.ok == true' "$evidence/doctor.json" >/dev/null
+jq -e '.data.ok == true' "$evidence/doctor.json" >/dev/null
 "$binary_b" --json --read-only --timeout 30s --config "$target_config" --profile "$target_profile" me > "$work/me.json"
-jq -e '.ok == true' "$work/me.json" >/dev/null
-jq '{ok,command,profile}' "$work/me.json" > "$evidence/read.json"
+jq -e '.schema_version == "tele/v1" and .meta.command == "tele me" and (.data | type == "object")' "$work/me.json" >/dev/null
+jq '{schema_version,meta:{command:.meta.command,tele_version:.meta.tele_version,profile:.meta.profile},data:{verified:true}}' "$work/me.json" > "$evidence/read.json"
 
 trash "$target_config"
 "$binary_b" --json --config "$target_config" --profile "$target_profile" \

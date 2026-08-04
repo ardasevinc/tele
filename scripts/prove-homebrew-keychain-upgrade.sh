@@ -121,7 +121,9 @@ brew install "$PROOF_FORMULA" > "$evidence/brew-install.txt"
 formula_installed=true
 prefix_a=$(realpath "$(brew --prefix "$PROOF_FORMULA")")
 binary_a="$prefix_a/bin/tele-keychain-upgrade-proof"
+printf 'a=%s\n' "$prefix_a" > "$evidence/cellar-paths.txt"
 [[ $prefix_a == */Cellar/tele-keychain-upgrade-proof/1.2.2-a ]]
+shasum -a 256 "$evidence/tele-a" "$binary_a" > "$evidence/a-byte-comparison.txt"
 cmp "$binary_a" "$evidence/tele-a"
 "$binary_a" internal official-build > "$evidence/a-official.txt"
 
@@ -137,7 +139,9 @@ render_formula '1.2.2-b' "$work/tele-b.tar.gz" "$sha_b"
 brew upgrade "$PROOF_FORMULA" > "$evidence/brew-upgrade.txt"
 prefix_b=$(realpath "$(brew --prefix "$PROOF_FORMULA")")
 binary_b="$prefix_b/bin/tele-keychain-upgrade-proof"
+printf 'b=%s\n' "$prefix_b" >> "$evidence/cellar-paths.txt"
 [[ $prefix_b == */Cellar/tele-keychain-upgrade-proof/1.2.2-b && $prefix_a != "$prefix_b" ]]
+shasum -a 256 "$evidence/tele-b" "$binary_b" > "$evidence/b-byte-comparison.txt"
 cmp "$binary_b" "$evidence/tele-b"
 "$binary_b" internal official-build > "$evidence/b-official.txt"
 "$binary_b" --json --read-only --timeout 30s --config "$target_config" --profile "$target_profile" doctor --connect > "$evidence/doctor.json"

@@ -6,6 +6,9 @@ readonly SIGNING_IDENTIFIER='com.ardasevinc.tele'
 readonly REQUIREMENT='identifier "com.ardasevinc.tele" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = J3S8HNBXSU'
 readonly PROOF_TAP='tele/keychain-upgrade-proof'
 readonly PROOF_FORMULA="$PROOF_TAP/tele-keychain-upgrade-proof"
+export HOMEBREW_NO_AUTO_UPDATE=1
+export HOMEBREW_NO_ENV_HINTS=1
+export HOMEBREW_NO_INSTALL_CLEANUP=1
 
 usage() {
   echo 'usage: scripts/prove-homebrew-keychain-upgrade.sh EVIDENCE_DIRECTORY SOURCE_CONFIG SOURCE_PROFILE SOURCE_VAULT SOURCE_INSTANCE PASSPHRASE_FILE SOURCE_SESSION' >&2
@@ -25,7 +28,7 @@ source_session=$7
 [[ ! -e $evidence ]] || { echo "evidence path already exists: $evidence" >&2; exit 1; }
 [[ -f $source_config && -f $source_vault && -f $passphrase_file && -f $source_session ]] || { echo 'source proof inputs are incomplete' >&2; exit 1; }
 [[ $(stat -f '%Lp' "$passphrase_file") == 600 ]] || { echo 'passphrase file must have mode 0600' >&2; exit 1; }
-for command in brew codesign git go jq security shasum tar uuidgen; do
+for command in brew codesign git go jq realpath security shasum tar uuidgen; do
   command -v "$command" >/dev/null || { echo "missing required command: $command" >&2; exit 1; }
 done
 security find-identity -v -p codesigning | grep -Fq "\"$SIGNING_IDENTITY\"" || { echo 'Developer ID identity is unavailable' >&2; exit 1; }
@@ -116,7 +119,7 @@ RUBY
 render_formula '1.2.2-a' "$work/tele-a.tar.gz" "$sha_a"
 brew install "$PROOF_FORMULA" > "$evidence/brew-install.txt"
 formula_installed=true
-prefix_a=$(brew --prefix "$PROOF_FORMULA")
+prefix_a=$(realpath "$(brew --prefix "$PROOF_FORMULA")")
 binary_a="$prefix_a/bin/tele-keychain-upgrade-proof"
 [[ $prefix_a == */Cellar/tele-keychain-upgrade-proof/1.2.2-a ]]
 cmp "$binary_a" "$evidence/tele-a"
@@ -132,7 +135,7 @@ api_id=$(/opt/homebrew/bin/tele --json --config "$source_config" --profile "$sou
 
 render_formula '1.2.2-b' "$work/tele-b.tar.gz" "$sha_b"
 brew upgrade "$PROOF_FORMULA" > "$evidence/brew-upgrade.txt"
-prefix_b=$(brew --prefix "$PROOF_FORMULA")
+prefix_b=$(realpath "$(brew --prefix "$PROOF_FORMULA")")
 binary_b="$prefix_b/bin/tele-keychain-upgrade-proof"
 [[ $prefix_b == */Cellar/tele-keychain-upgrade-proof/1.2.2-b && $prefix_a != "$prefix_b" ]]
 cmp "$binary_b" "$evidence/tele-b"

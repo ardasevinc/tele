@@ -5,7 +5,6 @@ package secrets
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/ebitengine/purego"
@@ -27,8 +26,6 @@ type securityFrameworkKeychain struct {
 	secItemCopyMatching        func(uintptr, *uintptr) int32
 	secItemDelete              func(uintptr) int32
 	secAccessCreate            func(uintptr, uintptr, *uintptr) int32
-	secAccessCopyOwnerAndACL   func(uintptr, *uint32, *uint32, *uint32, *uintptr) int32
-	secAccessCreateWithOwner   func(uint32, uint32, uint32, uintptr, *uintptr) uintptr
 	dictionaryKeyCallbacks     uintptr
 	dictionaryValueCallbacks   uintptr
 	secClass                   uintptr
@@ -91,8 +88,6 @@ func loadSecurityFrameworkKeychain() (*securityFrameworkKeychain, error) {
 		{security, "SecItemCopyMatching", &api.secItemCopyMatching},
 		{security, "SecItemDelete", &api.secItemDelete},
 		{security, "SecAccessCreate", &api.secAccessCreate},
-		{security, "SecAccessCopyOwnerAndACL", &api.secAccessCopyOwnerAndACL},
-		{security, "SecAccessCreateWithOwnerAndACL", &api.secAccessCreateWithOwner},
 		{purego.RTLD_DEFAULT, "memcpy", &copyReference},
 		{purego.RTLD_DEFAULT, "memcpy", &api.copyBytes},
 	}
@@ -347,32 +342,12 @@ func (s *securityFrameworkKeychain) newItemAccess(account string) (uintptr, erro
 		return 0, err
 	}
 	defer s.cfRelease(descriptor)
-	var defaultAccess uintptr
-	if status := s.secAccessCreate(descriptor, 0, &defaultAccess); status != 0 {
+	var access uintptr
+	if status := s.secAccessCreate(descriptor, 0, &access); status != 0 {
 		return 0, fmt.Errorf("SecAccessCreate failed: security framework status %d", status)
 	}
-	if defaultAccess == 0 {
-		return 0, fmt.Errorf("SecAccessCreate returned nil access")
-	}
-	defer s.cfRelease(defaultAccess)
-
-	var aclList uintptr
-	if status := s.secAccessCopyOwnerAndACL(defaultAccess, nil, nil, nil, &aclList); status != 0 {
-		return 0, fmt.Errorf("SecAccessCopyOwnerAndACL failed: security framework status %d", status)
-	}
-	if aclList == 0 {
-		return 0, fmt.Errorf("SecAccessCopyOwnerAndACL returned nil ACL list")
-	}
-	defer s.cfRelease(aclList)
-
-	const useOnlyUID = uint32(1)
-	var createError uintptr
-	access := s.secAccessCreateWithOwner(uint32(os.Getuid()), uint32(os.Getgid()), useOnlyUID, aclList, &createError)
-	if createError != 0 {
-		s.cfRelease(createError)
-	}
 	if access == 0 {
-		return 0, fmt.Errorf("SecAccessCreateWithOwnerAndACL returned nil access")
+		return 0, fmt.Errorf("SecAccessCreate returned nil access")
 	}
 	return access, nil
 }

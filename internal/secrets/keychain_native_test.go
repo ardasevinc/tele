@@ -35,9 +35,13 @@ func TestNativeKeychainCatalogLifecycle(t *testing.T) {
 	if !reflect.DeepEqual(snapshot, want) {
 		t.Fatalf("Snapshot = %#v", snapshot)
 	}
+	api.gets, api.exists = 0, 0
 	diagnostics, err := store.CatalogDiagnostics(context.Background())
 	if err != nil || diagnostics.Mappings != 2 || diagnostics.PhysicalItems != 2 || diagnostics.Orphans != 0 {
 		t.Fatalf("CatalogDiagnostics = %+v, %v", diagnostics, err)
+	}
+	if api.gets != 1 || api.exists != 2 {
+		t.Fatalf("catalog API calls: Get=%d Exists=%d, want 1 manifest Get and 2 metadata checks", api.gets, api.exists)
 	}
 	if err := store.Delete(context.Background(), "main", "api-hash"); err != nil {
 		t.Fatal(err)
@@ -66,9 +70,13 @@ func TestNativeKeychainManifestFailurePreservesMappingAndExposesOrphan(t *testin
 	if err != nil || string(value) != "old" {
 		t.Fatalf("authoritative value = %q, %v", value, err)
 	}
+	api.gets, api.exists = 0, 0
 	diagnostics, err := store.CatalogDiagnostics(context.Background())
 	if err != nil || diagnostics.Mappings != 1 || diagnostics.PhysicalItems != 2 || diagnostics.Orphans != 1 {
 		t.Fatalf("CatalogDiagnostics = %+v, %v", diagnostics, err)
+	}
+	if api.gets != 1 || api.exists != 2 {
+		t.Fatalf("catalog API calls: Get=%d Exists=%d, want 1 manifest Get and 2 metadata checks", api.gets, api.exists)
 	}
 }
 
@@ -121,6 +129,8 @@ type fakeNativeKeychain struct {
 	failManifestReplaceAt int
 	manifestReplaces      int
 	deleted               []string
+	gets                  int
+	exists                int
 }
 
 func newFakeNativeKeychain() *fakeNativeKeychain {
@@ -153,11 +163,18 @@ func (f *fakeNativeKeychain) Replace(_ context.Context, account string, value []
 }
 
 func (f *fakeNativeKeychain) Get(_ context.Context, account string) ([]byte, error) {
+	f.gets++
 	value, exists := f.items[account]
 	if !exists {
 		return nil, ErrNotFound
 	}
 	return append([]byte(nil), value...), nil
+}
+
+func (f *fakeNativeKeychain) Exists(_ context.Context, account string) (bool, error) {
+	f.exists++
+	_, exists := f.items[account]
+	return exists, nil
 }
 
 func (f *fakeNativeKeychain) Delete(_ context.Context, account string) error {

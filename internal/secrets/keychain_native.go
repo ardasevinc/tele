@@ -18,6 +18,7 @@ type nativeKeychainAPI interface {
 	Create(context.Context, string, []byte) error
 	Replace(context.Context, string, []byte) error
 	Get(context.Context, string) ([]byte, error)
+	Exists(context.Context, string) (bool, error)
 	Delete(context.Context, string) error
 }
 
@@ -249,26 +250,24 @@ func (s *NativeKeychainStore) CatalogDiagnostics(ctx context.Context) (CatalogDi
 		}
 		physicalItems := 0
 		for _, physicalID := range manifest.Mappings {
-			value, err := s.api.Get(ctx, s.physicalAccount(physicalID))
+			exists, err := s.api.Exists(ctx, s.physicalAccount(physicalID))
 			if err != nil {
-				if !errors.Is(err, ErrNotFound) {
-					return s.backendError(err)
-				}
+				return s.backendError(err)
+			}
+			if !exists {
 				return &BackendError{Kind: ErrCatalogIncomplete, Backend: BackendKeychain, Detail: "mapped physical item is missing or unreadable"}
 			}
-			zeroBytes(value)
 			physicalItems++
 		}
 		orphans := 0
 		for _, physicalID := range manifest.Garbage {
-			value, err := s.api.Get(ctx, s.physicalAccount(physicalID))
-			if errors.Is(err, ErrNotFound) {
-				continue
-			}
+			exists, err := s.api.Exists(ctx, s.physicalAccount(physicalID))
 			if err != nil {
 				return s.backendError(err)
 			}
-			zeroBytes(value)
+			if !exists {
+				continue
+			}
 			orphans++
 			physicalItems++
 		}

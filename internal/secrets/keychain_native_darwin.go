@@ -245,6 +245,28 @@ func (s *securityFrameworkKeychain) Get(ctx context.Context, account string) ([]
 	return value, nil
 }
 
+func (s *securityFrameworkKeychain) Exists(ctx context.Context, account string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	query, release, err := s.itemDictionary(account, nil, false)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	status := s.secItemCopyMatching(query, nil)
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if status == -25300 {
+		return false, nil
+	}
+	if err := classifySecurityStatus(status); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *securityFrameworkKeychain) Delete(ctx context.Context, account string) error {
 	if err := ctx.Err(); err != nil {
 		return err

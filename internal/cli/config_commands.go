@@ -214,7 +214,7 @@ func (s *appState) useProfile(ctx context.Context, name string) error {
 		return err
 	}
 	_, exists := cfg.Profiles[name]
-	if !exists && newProfileBackend() == secrets.BackendKeychain {
+	if !exists && s.newProfileBackend() == secrets.BackendKeychain {
 		profileState := *s
 		profileState.profile = name
 		if _, err := profileState.initKeychain(ctx); err != nil {

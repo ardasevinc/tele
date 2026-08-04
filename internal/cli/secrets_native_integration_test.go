@@ -68,6 +68,7 @@ func testVaultNativeMigrationLifecycle(
 	state := &appState{
 		cfgPath: configPath, profile: profile, vaultPassphraseFile: passphrasePath,
 		vaultPassphraseFD: -1, pathOverride: &config.Paths{Config: configPath, Data: dataRoot},
+		officialKeychainCheck: func() error { return nil },
 	}
 	toNative, err := state.migrateSecrets(ctx, backend)
 	if err != nil {

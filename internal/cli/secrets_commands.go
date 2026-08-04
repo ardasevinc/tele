@@ -270,6 +270,9 @@ func (s *appState) initSecretService(ctx context.Context) (secretInitResult, err
 }
 
 func (s *appState) initKeychain(ctx context.Context) (secretInitResult, error) {
+	if err := s.requireOfficialKeychain(); err != nil {
+		return secretInitResult{}, err
+	}
 	cfg, err := s.loadConfig()
 	if err != nil {
 		return secretInitResult{}, err
@@ -342,6 +345,11 @@ func (s *appState) migrateSecrets(ctx context.Context, targetBackend secrets.Bac
 	sourceSelection, err := secrets.EffectiveSelection(sourceConfigured)
 	if err != nil {
 		return migrationReceipt{}, err
+	}
+	if isKeychainBackend(sourceSelection.Backend) || targetBackend == secrets.BackendKeychain {
+		if err := s.requireOfficialKeychain(); err != nil {
+			return migrationReceipt{}, err
+		}
 	}
 	var passphrase []byte
 	sourceBackend := sourceSelection.Backend
@@ -644,6 +652,9 @@ func (s *appState) purgeSecretService(ctx context.Context, instance, confirmatio
 }
 
 func (s *appState) purgeKeychain(ctx context.Context, instance, confirmation string) (purgeResult, error) {
+	if err := s.requireOfficialKeychain(); err != nil {
+		return purgeResult{}, err
+	}
 	if err := secrets.ValidateVaultInstance(instance); err != nil {
 		return purgeResult{}, err
 	}

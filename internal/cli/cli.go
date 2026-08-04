@@ -84,6 +84,7 @@ type appState struct {
 	pathOverride            *config.Paths
 	configUpdater           func(context.Context, string, func(*config.Config) error) error
 	updateClient            *updater.Client
+	officialKeychainCheck   func() error
 
 	in  io.Reader
 	out io.Writer
@@ -237,10 +238,18 @@ func (s *appState) secretBackendInfo() (string, bool) {
 		return "configuration unavailable", false
 	}
 	if profile.Secrets == nil {
-		return secrets.Backend()
+		name, supported := secrets.Backend()
+		if supported && s.requireOfficialKeychain() != nil {
+			return name, false
+		}
+		return name, supported
 	}
 	id := secrets.BackendID(profile.Secrets.Backend)
-	return secrets.BackendDisplayName(id), id == secrets.BackendVault || id == secrets.BackendKeychain || id == secrets.BackendKeychainLegacy || id == secrets.BackendSecretService
+	supported := id == secrets.BackendVault || id == secrets.BackendSecretService
+	if isKeychainBackend(id) {
+		supported = s.requireOfficialKeychain() == nil
+	}
+	return secrets.BackendDisplayName(id), supported
 }
 
 func (s *appState) secretBackendSelection() (secrets.BackendID, string) {
@@ -281,6 +290,15 @@ func (s *appState) openSecretStore(ctx context.Context) (secrets.Store, error) {
 	if profile.Secrets != nil {
 		selection.Backend = secrets.BackendID(profile.Secrets.Backend)
 		selection.Instance = profile.Secrets.Instance
+	}
+	effective, err := secrets.EffectiveSelection(selection)
+	if err != nil {
+		return nil, err
+	}
+	if isKeychainBackend(effective.Backend) {
+		if err := s.requireOfficialKeychain(); err != nil {
+			return nil, err
+		}
 	}
 	var passphrase []byte
 	if selection.Backend == secrets.BackendVault {

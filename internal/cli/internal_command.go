@@ -25,7 +25,19 @@ func internalCommand(s *appState) *cobra.Command {
 			return err
 		},
 	}
-	cmd.AddCommand(compatibility)
+	officialBuild := &cobra.Command{
+		Use:    "official-build",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			if err := s.requireOfficialKeychain(); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintln(s.out, "tele-official-build-v1")
+			return err
+		},
+	}
+	cmd.AddCommand(compatibility, officialBuild)
 	return cmd
 }
 

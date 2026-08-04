@@ -4,6 +4,6 @@ package cli
 
 import "github.com/ardasevinc/tele/internal/secrets"
 
-func newProfileBackend() secrets.BackendID {
+func (*appState) newProfileBackend() secrets.BackendID {
 	return ""
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,29 @@ import (
 	"github.com/ardasevinc/tele/internal/config"
 	"github.com/ardasevinc/tele/internal/secrets"
 )
+
+func TestInternalOfficialBuildUsesCryptographicPolicy(t *testing.T) {
+	var stdout bytes.Buffer
+	state := &appState{
+		out: &stdout, err: &bytes.Buffer{},
+		officialKeychainCheck: func() error { return errors.New("not official") },
+	}
+	if err := executeWithState(context.Background(), []string{"internal", "official-build"}, state); err == nil {
+		t.Fatal("untrusted build reported official")
+	}
+
+	stdout.Reset()
+	state = &appState{
+		out: &stdout, err: &bytes.Buffer{},
+		officialKeychainCheck: func() error { return nil },
+	}
+	if err := executeWithState(context.Background(), []string{"internal", "official-build"}, state); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "tele-official-build-v1\n" {
+		t.Fatalf("official-build output = %q", stdout.String())
+	}
+}
 
 func TestInternalCompatibilityChecksCurrentConfigAndVaultWithoutUnlocking(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())

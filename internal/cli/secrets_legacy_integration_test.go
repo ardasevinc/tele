@@ -55,10 +55,11 @@ func TestLegacyKeychainMigrationRealLifecycle(t *testing.T) {
 
 	inventory := botstore.New(dataRoot, profile)
 	state := &appState{
-		cfgPath:      configPath,
-		profile:      profile,
-		botInventory: &inventory,
-		pathOverride: &config.Paths{Config: configPath, Data: dataRoot},
+		cfgPath:               configPath,
+		profile:               profile,
+		botInventory:          &inventory,
+		pathOverride:          &config.Paths{Config: configPath, Data: dataRoot},
+		officialKeychainCheck: func() error { return nil },
 	}
 	receipt, err := state.migrateSecrets(ctx, secrets.BackendKeychain)
 	if err != nil {

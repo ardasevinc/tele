@@ -27,6 +27,7 @@ type NativeKeychainStore struct {
 	profile  string
 	instance string
 	lockPath string
+	manifest *keychainManifest
 }
 
 type keychainManifest struct {
@@ -62,10 +63,7 @@ func OpenKeychain(ctx context.Context, dataRoot, profile, instance string) (*Nat
 		return nil, err
 	}
 	store := newNativeKeychainStore(api, dataRoot, profile, instance)
-	if err := withProfileLockPath(ctx, store.lockPath, func(ctx context.Context) error {
-		_, err := store.loadManifest(ctx)
-		return err
-	}); err != nil {
+	if err := store.open(ctx); err != nil {
 		return nil, err
 	}
 	return store, nil
@@ -91,7 +89,7 @@ func newNativeKeychainStore(api nativeKeychainAPI, dataRoot, profile, instance s
 	}
 }
 
-func (s *NativeKeychainStore) Close() {}
+func (s *NativeKeychainStore) Close() { s.manifest = nil }
 
 func (s *NativeKeychainStore) BackendInfo() BackendInfo {
 	return BackendInfo{ID: BackendKeychain, Instance: s.instance, Name: "macOS Keychain", Supported: true}
@@ -103,7 +101,7 @@ func (s *NativeKeychainStore) Get(ctx context.Context, profile, key string) ([]b
 	}
 	var value []byte
 	err := withProfileLockPath(ctx, s.lockPath, func(ctx context.Context) error {
-		manifest, err := s.loadManifest(ctx)
+		manifest, err := s.manifestView(ctx)
 		if err != nil {
 			return err
 		}
@@ -122,7 +120,7 @@ func (s *NativeKeychainStore) Set(ctx context.Context, profile, key string, valu
 		return err
 	}
 	return withProfileLockPath(ctx, s.lockPath, func(ctx context.Context) error {
-		manifest, err := s.loadManifest(ctx)
+		manifest, err := s.refreshManifest(ctx)
 		if err != nil {
 			return err
 		}
@@ -186,7 +184,7 @@ func (s *NativeKeychainStore) Delete(ctx context.Context, profile, key string) e
 		return err
 	}
 	return withProfileLockPath(ctx, s.lockPath, func(ctx context.Context) error {
-		manifest, err := s.loadManifest(ctx)
+		manifest, err := s.refreshManifest(ctx)
 		if err != nil {
 			return err
 		}
@@ -218,7 +216,7 @@ func (s *NativeKeychainStore) Delete(ctx context.Context, profile, key string) e
 func (s *NativeKeychainStore) Snapshot(ctx context.Context) (map[string][]byte, error) {
 	var snapshot map[string][]byte
 	err := withProfileLockPath(ctx, s.lockPath, func(ctx context.Context) error {
-		manifest, err := s.loadManifest(ctx)
+		manifest, err := s.manifestView(ctx)
 		if err != nil {
 			return err
 		}
@@ -244,7 +242,7 @@ func (s *NativeKeychainStore) Snapshot(ctx context.Context) (map[string][]byte, 
 func (s *NativeKeychainStore) CatalogDiagnostics(ctx context.Context) (CatalogDiagnostics, error) {
 	var diagnostics CatalogDiagnostics
 	err := withProfileLockPath(ctx, s.lockPath, func(ctx context.Context) error {
-		manifest, err := s.loadManifest(ctx)
+		manifest, err := s.manifestView(ctx)
 		if err != nil {
 			return err
 		}
@@ -337,6 +335,38 @@ func (s *NativeKeychainStore) initialize(ctx context.Context) error {
 	})
 }
 
+func (s *NativeKeychainStore) open(ctx context.Context) error {
+	return withProfileLockPath(ctx, s.lockPath, func(ctx context.Context) error {
+		manifest, err := s.loadManifest(ctx)
+		if err != nil {
+			return err
+		}
+		s.cacheManifest(manifest)
+		return nil
+	})
+}
+
+func (s *NativeKeychainStore) manifestView(ctx context.Context) (keychainManifest, error) {
+	if s.manifest != nil {
+		return cloneKeychainManifest(*s.manifest), nil
+	}
+	manifest, err := s.loadManifest(ctx)
+	if err != nil {
+		return keychainManifest{}, err
+	}
+	s.cacheManifest(manifest)
+	return manifest, nil
+}
+
+func (s *NativeKeychainStore) refreshManifest(ctx context.Context) (keychainManifest, error) {
+	manifest, err := s.loadManifest(ctx)
+	if err != nil {
+		return keychainManifest{}, err
+	}
+	s.cacheManifest(manifest)
+	return manifest, nil
+}
+
 func (s *NativeKeychainStore) loadManifest(ctx context.Context) (keychainManifest, error) {
 	encoded, err := s.api.Get(ctx, s.manifestAccount())
 	if err != nil {
@@ -379,6 +409,7 @@ func (s *NativeKeychainStore) writeManifest(ctx context.Context, manifest keycha
 	if readback.Generation != manifest.Generation || !equalStringMap(readback.Mappings, manifest.Mappings) || !equalStrings(readback.Garbage, manifest.Garbage) {
 		return &BackendError{Kind: ErrCatalogIncomplete, Backend: BackendKeychain, Detail: "manifest readback verification failed"}
 	}
+	s.cacheManifest(readback)
 	return nil
 }
 
@@ -408,7 +439,7 @@ func (s *NativeKeychainStore) deletePhysical(ctx context.Context, physicalID str
 func (s *NativeKeychainStore) purge(ctx context.Context) (int, error) {
 	deleted := 0
 	err := withProfileLockPath(ctx, s.lockPath, func(ctx context.Context) error {
-		manifest, err := s.loadManifest(ctx)
+		manifest, err := s.refreshManifest(ctx)
 		if err != nil {
 			return err
 		}
@@ -501,6 +532,21 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func cloneKeychainManifest(manifest keychainManifest) keychainManifest {
+	clone := manifest
+	clone.Mappings = make(map[string]string, len(manifest.Mappings))
+	for key, value := range manifest.Mappings {
+		clone.Mappings[key] = value
+	}
+	clone.Garbage = append([]string(nil), manifest.Garbage...)
+	return clone
+}
+
+func (s *NativeKeychainStore) cacheManifest(manifest keychainManifest) {
+	clone := cloneKeychainManifest(manifest)
+	s.manifest = &clone
 }
 
 func (s *NativeKeychainStore) backendError(err error) error {

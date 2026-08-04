@@ -215,9 +215,55 @@ func TestRunStopsKeychainReadsAfterFirstAuthorizationFailure(t *testing.T) {
 	}
 }
 
+func TestRunStopsValueReadsWhenKeychainMetadataRequiresAuthorization(t *testing.T) {
+	fx := validFixture(t)
+	store := &metadataBlockedKeychainStore{memoryStore: fx.store}
+	probeCalls := 0
+	fx.opts.SecretBackendID = secrets.BackendKeychain
+	fx.opts.SecretBackendInstance = "95a82a93-9282-46af-afc8-8000299505ff"
+	fx.opts.Secrets = store
+	fx.opts.Connect = true
+	fx.opts.Probe = func(context.Context) (bool, error) {
+		probeCalls++
+		return true, nil
+	}
+
+	report := Run(context.Background(), fx.opts)
+	if checkNamed(t, report, "api_hash").Status != Pass || checkNamed(t, report, "session_key").Status != Pass {
+		t.Fatalf("secret checks = %+v", report.Checks)
+	}
+	if checkNamed(t, report, "secret_catalog").Status != Fail {
+		t.Fatalf("secret_catalog = %+v", checkNamed(t, report, "secret_catalog"))
+	}
+	for _, name := range []string{"session_decryption", "connectivity", "authorization"} {
+		if checkNamed(t, report, name).Status != Skipped {
+			t.Fatalf("%s = %+v, want skipped", name, checkNamed(t, report, name))
+		}
+	}
+	if store.gets != 2 || store.diagnostics != 1 || probeCalls != 0 {
+		t.Fatalf("calls after metadata failure: gets=%d diagnostics=%d probe=%d", store.gets, store.diagnostics, probeCalls)
+	}
+}
+
 type blockedKeychainStore struct {
 	gets        int
 	diagnostics int
+}
+
+type metadataBlockedKeychainStore struct {
+	*memoryStore
+	gets        int
+	diagnostics int
+}
+
+func (s *metadataBlockedKeychainStore) Get(ctx context.Context, profile, key string) ([]byte, error) {
+	s.gets++
+	return s.memoryStore.Get(ctx, profile, key)
+}
+
+func (s *metadataBlockedKeychainStore) CatalogDiagnostics(context.Context) (secrets.CatalogDiagnostics, error) {
+	s.diagnostics++
+	return secrets.CatalogDiagnostics{}, &secrets.BackendError{Kind: secrets.ErrInteractionRequired, Backend: secrets.BackendKeychain}
 }
 
 func (s *blockedKeychainStore) Get(context.Context, string, string) ([]byte, error) {

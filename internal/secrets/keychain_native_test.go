@@ -40,8 +40,8 @@ func TestNativeKeychainCatalogLifecycle(t *testing.T) {
 	if err != nil || diagnostics.Mappings != 2 || diagnostics.PhysicalItems != 2 || diagnostics.Orphans != 0 {
 		t.Fatalf("CatalogDiagnostics = %+v, %v", diagnostics, err)
 	}
-	if api.gets != 1 || api.exists != 2 {
-		t.Fatalf("catalog API calls: Get=%d Exists=%d, want 1 manifest Get and 2 metadata checks", api.gets, api.exists)
+	if api.gets != 0 || api.exists != 2 {
+		t.Fatalf("catalog API calls: Get=%d Exists=%d, want cached manifest and 2 metadata checks", api.gets, api.exists)
 	}
 	if err := store.Delete(context.Background(), "main", "api-hash"); err != nil {
 		t.Fatal(err)
@@ -75,8 +75,75 @@ func TestNativeKeychainManifestFailurePreservesMappingAndExposesOrphan(t *testin
 	if err != nil || diagnostics.Mappings != 1 || diagnostics.PhysicalItems != 2 || diagnostics.Orphans != 1 {
 		t.Fatalf("CatalogDiagnostics = %+v, %v", diagnostics, err)
 	}
-	if api.gets != 1 || api.exists != 2 {
-		t.Fatalf("catalog API calls: Get=%d Exists=%d, want 1 manifest Get and 2 metadata checks", api.gets, api.exists)
+	if api.gets != 0 || api.exists != 2 {
+		t.Fatalf("catalog API calls: Get=%d Exists=%d, want cached manifest and 2 metadata checks", api.gets, api.exists)
+	}
+}
+
+func TestNativeKeychainCommandViewLoadsManifestOnce(t *testing.T) {
+	ctx := context.Background()
+	api := newFakeNativeKeychain()
+	seed := newNativeKeychainStore(api, secureTempDir(t), "main", testVaultInstance)
+	if err := seed.initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Set(ctx, "main", "first", []byte("one")); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Set(ctx, "main", "second", []byte("two")); err != nil {
+		t.Fatal(err)
+	}
+
+	store := newNativeKeychainStore(api, secureTempDir(t), "main", testVaultInstance)
+	api.gets, api.exists = 0, 0
+	if err := store.open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"first", "second"} {
+		if _, err := store.Get(ctx, "main", key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.CatalogDiagnostics(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if api.gets != 3 || api.exists != 2 {
+		t.Fatalf("command view API calls: Get=%d Exists=%d, want 1 manifest Get, 2 value Gets, and 2 metadata checks", api.gets, api.exists)
+	}
+}
+
+func TestNativeKeychainMutationRefreshesConcurrentManifestAdvance(t *testing.T) {
+	ctx := context.Background()
+	api := newFakeNativeKeychain()
+	dataRoot := secureTempDir(t)
+	first := newNativeKeychainStore(api, dataRoot, "main", testVaultInstance)
+	if err := first.initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Set(ctx, "main", "first", []byte("one")); err != nil {
+		t.Fatal(err)
+	}
+	second := newNativeKeychainStore(api, dataRoot, "main", testVaultInstance)
+	if err := second.open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Set(ctx, "main", "advanced", []byte("two")); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Set(ctx, "main", "later", []byte("three")); err != nil {
+		t.Fatal(err)
+	}
+
+	verifier := newNativeKeychainStore(api, dataRoot, "main", testVaultInstance)
+	if err := verifier.open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := verifier.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot) != 3 || string(snapshot["first"]) != "one" || string(snapshot["advanced"]) != "two" || string(snapshot["later"]) != "three" {
+		t.Fatalf("snapshot after concurrent advance = %#v", snapshot)
 	}
 }
 

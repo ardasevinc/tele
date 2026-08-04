@@ -149,12 +149,15 @@ func Run(ctx context.Context, opts Options) Report {
 		accessBlocked = secrets.IsAccessBlocked(sessionErr)
 	}
 	inspectVault(ctx, opts, &report)
-	inspectSecretCatalog(ctx, opts, accessBlocked, &report)
+	catalogErr := inspectSecretCatalog(ctx, opts, accessBlocked, &report)
+	accessBlocked = accessBlocked || secrets.IsAccessBlocked(catalogErr)
 	inspectMigrationReceipts(opts.Paths.Data, profileName, &report)
 
 	sessionPath := filepath.Join(opts.Paths.Data, profileName, "session.enc")
 	sessionReady := inspectSessionFile(sessionPath, &report)
-	if sessionReady && sessionKeyReady {
+	if accessBlocked {
+		report.add("session_decryption", Skipped, "Keychain access stopped after the first authorization failure", nil)
+	} else if sessionReady && sessionKeyReady {
 		storage := session.EncryptedStorage{Profile: profileName, Store: opts.Secrets, Path: sessionPath}
 		if plaintext, err := storage.InspectSession(ctx); err != nil {
 			report.add("session_decryption", Fail, "session cannot be decrypted", nil)
@@ -173,7 +176,7 @@ func Run(ctx context.Context, opts Options) Report {
 	if !opts.Connect {
 		report.add("connectivity", Skipped, "live check not requested", nil)
 		report.add("authorization", Skipped, "live check not requested", nil)
-	} else if !profileReady || profile.APIID <= 0 || !apiHashReady || !sessionKeyReady || opts.Probe == nil {
+	} else if accessBlocked || !profileReady || profile.APIID <= 0 || !apiHashReady || !sessionKeyReady || opts.Probe == nil {
 		report.add("connectivity", Skipped, "live prerequisites are incomplete", nil)
 		report.add("authorization", Skipped, "live prerequisites are incomplete", nil)
 	} else {
@@ -201,38 +204,42 @@ func Run(ctx context.Context, opts Options) Report {
 	return report
 }
 
-func inspectSecretCatalog(ctx context.Context, opts Options, accessBlocked bool, report *Report) {
+func inspectSecretCatalog(ctx context.Context, opts Options, accessBlocked bool, report *Report) error {
 	if opts.SecretBackendID == secrets.BackendVault {
 		diagnoser, ok := opts.Secrets.(secrets.VaultDiagnoser)
 		if !ok {
 			report.add("secret_catalog", Fail, "vault catalog diagnostics are unavailable", nil)
-			return
+			return nil
 		}
 		diagnostics, err := diagnoser.VaultDiagnostics(ctx)
 		if err != nil {
 			report.add("secret_catalog", Fail, "vault catalog cannot be inspected", nil)
-			return
+			return err
 		}
 		report.add("secret_catalog", Pass, "vault payload is authoritative", map[string]any{"generation": diagnostics.Generation, "mappings": diagnostics.Records, "orphans": 0})
-		return
+		return nil
 	}
 	if opts.SecretBackendID != secrets.BackendSecretService && opts.SecretBackendID != secrets.BackendKeychain {
 		report.add("secret_catalog", Skipped, "active backend has no v1 catalog", nil)
-		return
+		return nil
 	}
 	if accessBlocked && opts.SecretBackendID == secrets.BackendKeychain {
 		report.add("secret_catalog", Skipped, "Keychain access stopped after the first authorization failure", nil)
-		return
+		return nil
 	}
 	diagnoser, ok := opts.Secrets.(secrets.CatalogDiagnoser)
 	if !ok {
 		report.add("secret_catalog", Fail, "native catalog diagnostics are unavailable", nil)
-		return
+		return nil
 	}
 	diagnostics, err := diagnoser.CatalogDiagnostics(ctx)
 	if err != nil {
-		report.add("secret_catalog", Fail, "native catalog cannot be inspected", nil)
-		return
+		message := "native catalog cannot be inspected"
+		if secrets.IsAccessBlocked(err) && opts.SecretBackendID == secrets.BackendKeychain {
+			message = "Keychain metadata requires authorization; physical secret values were not read"
+		}
+		report.add("secret_catalog", Fail, message, nil)
+		return err
 	}
 	status := Pass
 	message := "native catalog is authoritative"
@@ -244,6 +251,7 @@ func inspectSecretCatalog(ctx context.Context, opts Options, accessBlocked bool,
 		"generation": diagnostics.Generation, "mappings": diagnostics.Mappings,
 		"physical_items": diagnostics.PhysicalItems, "orphans": diagnostics.Orphans,
 	})
+	return nil
 }
 
 func inspectVault(ctx context.Context, opts Options, report *Report) {

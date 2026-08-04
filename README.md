@@ -20,7 +20,7 @@ contracts; urgent safety fixes may narrow behavior that cannot remain safe.
 
 | Platform | Status | Secret storage |
 | --- | --- | --- |
-| macOS arm64/amd64 | supported | native macOS Keychain or portable vault |
+| macOS arm64/amd64 | supported | official Developer ID release: native Keychain or portable vault; other builds: portable vault |
 | Linux arm64/amd64 | supported | Secret Service or portable vault |
 | Windows amd64 | compile-smoke only | not implemented |
 
@@ -74,22 +74,25 @@ release archives and local-checkout installs report the exact source commit.
 
 For a local checkout, `just install` stamps the current commit, installs to
 `GOBIN` (or `GOPATH/bin`), and prints the exact installed path and version.
+Go-installed and local-checkout binaries are not Developer ID-signed official
+macOS builds, so they use `vault-v1` and cannot open or create production
+`keychain-v1` state.
 
 ## First use
 
 Create an app at <https://my.telegram.org/apps>, then configure a profile:
 
 ```sh
+tele --profile test config set api-id 123456
+tele --profile test secrets init --backend vault-v1
 tele profiles use test
-tele config set api-id 123456
-tele secrets init --backend vault-v1
-tele config set api-hash
-TELE_PHONE=+15555550123 tele auth start --phone-env TELE_PHONE
+tele --profile test config set api-hash
+TELE_PHONE=+15555550123 tele --profile test auth start --phone-env TELE_PHONE
 read -rs TELE_CODE && export TELE_CODE
-tele auth complete --code-env TELE_CODE
+tele --profile test auth complete --code-env TELE_CODE
 unset TELE_CODE
-tele auth status
-tele chats --limit 20
+tele --profile test auth status
+tele --profile test chats --limit 20
 ```
 
 The portable `vault-v1` backend works on every supported macOS and Linux
@@ -99,9 +102,13 @@ descriptor numbered 3 or higher with `--vault-passphrase-fd`; passphrases are
 never accepted through argv or environment variables.
 
 Linux desktops with a running, unlocked Secret Service provider may instead
-initialize `secret-service-v1`. macOS users may choose `keychain-v1`. If a
-provider is missing, headless, or locked, tele returns a typed backend error
-rather than switching storage behind your back.
+initialize `secret-service-v1`. Official Developer ID-signed macOS release
+builds may choose `keychain-v1`; Tele verifies its own pinned identifier, Team
+ID, Developer ID chain, and signing requirement through Security.framework
+before creating or opening that backend. Ad-hoc, source, and `go install`
+builds must use `vault-v1`. If a provider is missing, headless, locked, or the
+running build is not eligible, tele returns a typed backend error rather than
+switching storage behind your back.
 
 For one-shot interactive login, `tele auth login` still works.
 

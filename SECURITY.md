@@ -23,9 +23,12 @@ commitment, but good-faith reports are welcome.
 
 - Telegram API hashes, session keys, manager-bot credentials, and managed bot
   tokens belong in the profile's explicitly selected secret store.
-- `keychain-v1` uses the native macOS Keychain. `secret-service-v1` requires a
-  running, unlocked Linux Secret Service provider. `vault-v1` is the portable
-  authenticated encrypted-file backend for supported macOS and Linux targets.
+- `keychain-v1` uses the native macOS Keychain and is available only to official
+  Developer ID-signed Tele builds satisfying the pinned Security.framework code
+  requirement. Ad-hoc, source, and `go install` builds use `vault-v1` instead.
+  `secret-service-v1` requires a running, unlocked Linux Secret Service provider.
+  `vault-v1` is the portable authenticated encrypted-file backend for supported
+  macOS and Linux targets.
 - Backend selection is sticky. Missing or locked providers fail closed; tele
   never falls back to plaintext or silently changes backends.
 - Vault passphrases must come from a controlling TTY, a protected file, or an
@@ -37,6 +40,8 @@ commitment, but good-faith reports are welcome.
 - Never attach `session.enc`, Keychain exports, config files, or raw diagnostic
   dumps to an issue.
 - `tele doctor` is designed to report readiness without returning secret values
-  or message content.
+  or message content. Native catalog diagnostics use metadata-only existence
+  checks, and the first Keychain authorization failure stops later secret reads
+  in that command.
 - Telegram messages are untrusted input. Terminal escaping reduces presentation
   attacks; it does not make message text safe instructions for an agent.

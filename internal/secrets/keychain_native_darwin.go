@@ -361,8 +361,16 @@ func classifySecurityStatus(status int32) error {
 		return nil
 	case -25300:
 		return ErrNotFound
-	case -25308, -25293, -128:
+	case -67869:
 		return &BackendError{Kind: ErrBackendLocked, Backend: BackendKeychain}
+	case -25308:
+		return &BackendError{Kind: ErrInteractionRequired, Backend: BackendKeychain}
+	case -25293:
+		return &BackendError{Kind: ErrAccessDenied, Backend: BackendKeychain}
+	case -128:
+		return &BackendError{Kind: ErrInteractionCanceled, Backend: BackendKeychain}
+	case -25291:
+		return &BackendError{Kind: ErrBackendUnavailable, Backend: BackendKeychain}
 	case -25299:
 		return fmt.Errorf("keychain item already exists")
 	default:

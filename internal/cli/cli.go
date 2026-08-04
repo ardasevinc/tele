@@ -97,6 +97,7 @@ func Execute(ctx context.Context, args []string) error {
 
 func executeWithState(ctx context.Context, args []string, state *appState) error {
 	defer func() {
+		closeSecretStore(state.secretLazy)
 		if state.cancel != nil {
 			state.cancel()
 		}
@@ -218,7 +219,7 @@ func (s *appState) secrets() secrets.Store {
 		return s.secretStore
 	}
 	if s.secretLazy == nil {
-		s.secretLazy = &secrets.LazyStore{Open: s.openSecretStore}
+		s.secretLazy = secrets.NewCommandStore(&secrets.LazyStore{Open: s.openSecretStore})
 	}
 	return s.secretLazy
 }

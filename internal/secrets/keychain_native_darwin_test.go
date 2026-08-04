@@ -18,9 +18,15 @@ func TestLoadSecurityFrameworkKeychain(t *testing.T) {
 }
 
 func TestClassifySecurityStatus(t *testing.T) {
-	for _, status := range []int32{-25308, -25293, -128} {
-		if err := classifySecurityStatus(status); !errors.Is(err, ErrBackendLocked) {
-			t.Fatalf("status %d error = %v", status, err)
+	for status, kind := range map[int32]error{
+		-67869: ErrBackendLocked,
+		-25308: ErrInteractionRequired,
+		-25293: ErrAccessDenied,
+		-128:   ErrInteractionCanceled,
+		-25291: ErrBackendUnavailable,
+	} {
+		if err := classifySecurityStatus(status); !errors.Is(err, kind) {
+			t.Fatalf("status %d error = %v, want %v", status, err, kind)
 		}
 	}
 	if err := classifySecurityStatus(-25300); !errors.Is(err, ErrNotFound) {

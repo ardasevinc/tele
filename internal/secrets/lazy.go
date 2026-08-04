@@ -8,9 +8,23 @@ import (
 type LazyStore struct {
 	Open func(context.Context) (Store, error)
 
-	mu    sync.Mutex
-	store Store
-	err   error
+	mu     sync.Mutex
+	store  Store
+	err    error
+	closed bool
+}
+
+func (s *LazyStore) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	s.closed = true
+	if closer, ok := s.store.(interface{ Close() }); ok {
+		closer.Close()
+	}
+	s.store = nil
 }
 
 func (s *LazyStore) Get(ctx context.Context, profile, key string) ([]byte, error) {
@@ -76,6 +90,9 @@ func (s *LazyStore) CatalogDiagnostics(ctx context.Context) (CatalogDiagnostics,
 func (s *LazyStore) resolve(ctx context.Context) (Store, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil, &BackendError{Kind: ErrBackendUnavailable, Detail: "secret store is closed"}
+	}
 	if s.store != nil || s.err != nil {
 		return s.store, s.err
 	}

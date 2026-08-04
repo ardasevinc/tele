@@ -138,10 +138,18 @@ func Run(ctx context.Context, opts Options) Report {
 	} else {
 		report.add("secret_store", Fail, "secret store is unavailable", backendDetails)
 	}
-	apiHashReady := inspectSecret(ctx, opts, profileName, "api-hash", "api_hash", &report)
-	sessionKeyReady := inspectSecret(ctx, opts, profileName, session.EncryptionKey, "session_key", &report)
+	apiHashReady, secretErr := inspectSecret(ctx, opts, profileName, "api-hash", "api_hash", &report)
+	accessBlocked := secrets.IsAccessBlocked(secretErr)
+	sessionKeyReady := false
+	if accessBlocked {
+		report.add("session_key", Skipped, "Keychain access stopped after the first authorization failure", nil)
+	} else {
+		var sessionErr error
+		sessionKeyReady, sessionErr = inspectSecret(ctx, opts, profileName, session.EncryptionKey, "session_key", &report)
+		accessBlocked = secrets.IsAccessBlocked(sessionErr)
+	}
 	inspectVault(ctx, opts, &report)
-	inspectSecretCatalog(ctx, opts, &report)
+	inspectSecretCatalog(ctx, opts, accessBlocked, &report)
 	inspectMigrationReceipts(opts.Paths.Data, profileName, &report)
 
 	sessionPath := filepath.Join(opts.Paths.Data, profileName, "session.enc")
@@ -165,7 +173,7 @@ func Run(ctx context.Context, opts Options) Report {
 	if !opts.Connect {
 		report.add("connectivity", Skipped, "live check not requested", nil)
 		report.add("authorization", Skipped, "live check not requested", nil)
-	} else if !profileReady || profile.APIID <= 0 || !apiHashReady || opts.Probe == nil {
+	} else if !profileReady || profile.APIID <= 0 || !apiHashReady || !sessionKeyReady || opts.Probe == nil {
 		report.add("connectivity", Skipped, "live prerequisites are incomplete", nil)
 		report.add("authorization", Skipped, "live prerequisites are incomplete", nil)
 	} else {
@@ -193,7 +201,7 @@ func Run(ctx context.Context, opts Options) Report {
 	return report
 }
 
-func inspectSecretCatalog(ctx context.Context, opts Options, report *Report) {
+func inspectSecretCatalog(ctx context.Context, opts Options, accessBlocked bool, report *Report) {
 	if opts.SecretBackendID == secrets.BackendVault {
 		diagnoser, ok := opts.Secrets.(secrets.VaultDiagnoser)
 		if !ok {
@@ -210,6 +218,10 @@ func inspectSecretCatalog(ctx context.Context, opts Options, report *Report) {
 	}
 	if opts.SecretBackendID != secrets.BackendSecretService && opts.SecretBackendID != secrets.BackendKeychain {
 		report.add("secret_catalog", Skipped, "active backend has no v1 catalog", nil)
+		return
+	}
+	if accessBlocked && opts.SecretBackendID == secrets.BackendKeychain {
+		report.add("secret_catalog", Skipped, "Keychain access stopped after the first authorization failure", nil)
 		return
 	}
 	diagnoser, ok := opts.Secrets.(secrets.CatalogDiagnoser)
@@ -313,22 +325,33 @@ func inspectConfig(path string, report *Report) (config.Config, bool) {
 	return cfg, true
 }
 
-func inspectSecret(ctx context.Context, opts Options, profile, key, name string, report *Report) bool {
+func inspectSecret(ctx context.Context, opts Options, profile, key, name string, report *Report) (bool, error) {
 	if !opts.SecretBackendSupported || opts.Secrets == nil {
 		report.add(name, Skipped, "secret store is unavailable", nil)
-		return false
+		return false, nil
 	}
 	value, err := opts.Secrets.Get(ctx, profile, key)
 	if errors.Is(err, secrets.ErrNotFound) || (err == nil && len(value) == 0) {
 		report.add(name, Fail, "secret is missing", nil)
-		return false
+		return false, err
 	}
 	if err != nil {
-		report.add(name, Fail, "secret could not be read", nil)
-		return false
+		message := "secret could not be read"
+		switch {
+		case errors.Is(err, secrets.ErrInteractionRequired):
+			message = "secret requires Keychain authorization from an official signed Tele build"
+		case errors.Is(err, secrets.ErrAccessDenied):
+			message = "secret access was denied by Keychain"
+		case errors.Is(err, secrets.ErrInteractionCanceled):
+			message = "Keychain authorization was canceled"
+		case errors.Is(err, secrets.ErrBackendLocked):
+			message = "Keychain is locked"
+		}
+		report.add(name, Fail, message, nil)
+		return false, err
 	}
 	report.add(name, Pass, "secret is available", nil)
-	return true
+	return true, nil
 }
 
 func inspectSessionFile(path string, report *Report) bool {

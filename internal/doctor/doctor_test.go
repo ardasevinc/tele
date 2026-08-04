@@ -188,6 +188,51 @@ func TestRunInspectsNativeCatalogThroughLazyStore(t *testing.T) {
 	}
 }
 
+func TestRunStopsKeychainReadsAfterFirstAuthorizationFailure(t *testing.T) {
+	fx := validFixture(t)
+	store := &blockedKeychainStore{}
+	probeCalls := 0
+	fx.opts.SecretBackendID = secrets.BackendKeychain
+	fx.opts.SecretBackendInstance = "95a82a93-9282-46af-afc8-8000299505ff"
+	fx.opts.Secrets = store
+	fx.opts.Connect = true
+	fx.opts.Probe = func(context.Context) (bool, error) {
+		probeCalls++
+		return true, nil
+	}
+
+	report := Run(context.Background(), fx.opts)
+	if checkNamed(t, report, "api_hash").Status != Fail {
+		t.Fatalf("api_hash = %+v", checkNamed(t, report, "api_hash"))
+	}
+	for _, name := range []string{"session_key", "secret_catalog", "session_decryption", "connectivity", "authorization"} {
+		if checkNamed(t, report, name).Status != Skipped {
+			t.Fatalf("%s = %+v, want skipped", name, checkNamed(t, report, name))
+		}
+	}
+	if store.gets != 1 || store.diagnostics != 0 || probeCalls != 0 {
+		t.Fatalf("calls after authorization failure: gets=%d diagnostics=%d probe=%d", store.gets, store.diagnostics, probeCalls)
+	}
+}
+
+type blockedKeychainStore struct {
+	gets        int
+	diagnostics int
+}
+
+func (s *blockedKeychainStore) Get(context.Context, string, string) ([]byte, error) {
+	s.gets++
+	return nil, &secrets.BackendError{Kind: secrets.ErrInteractionRequired, Backend: secrets.BackendKeychain}
+}
+
+func (*blockedKeychainStore) Set(context.Context, string, string, []byte) error { return nil }
+func (*blockedKeychainStore) Delete(context.Context, string, string) error      { return nil }
+
+func (s *blockedKeychainStore) CatalogDiagnostics(context.Context) (secrets.CatalogDiagnostics, error) {
+	s.diagnostics++
+	return secrets.CatalogDiagnostics{}, nil
+}
+
 func TestRunAggregatesPartialConfigAndUnsupportedPlatform(t *testing.T) {
 	fx := validFixture(t)
 	if err := os.Remove(fx.opts.Paths.Config); err != nil {

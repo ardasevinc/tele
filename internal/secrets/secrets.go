@@ -13,9 +13,17 @@ var (
 	ErrBackendUnavailable  = errors.New("secret backend unavailable")
 	ErrBackendUnconfigured = errors.New("secret backend unconfigured")
 	ErrBackendLocked       = errors.New("secret backend locked")
+	ErrAccessDenied        = errors.New("secret backend access denied")
+	ErrInteractionRequired = errors.New("secret backend interaction required")
+	ErrInteractionCanceled = errors.New("secret backend interaction canceled")
 	ErrCatalogIncomplete   = errors.New("secret catalog incomplete")
 	ErrMigrationIncomplete = errors.New("secret migration incomplete")
 )
+
+func IsAccessBlocked(err error) bool {
+	return errors.Is(err, ErrBackendLocked) || errors.Is(err, ErrAccessDenied) ||
+		errors.Is(err, ErrInteractionRequired) || errors.Is(err, ErrInteractionCanceled)
+}
 
 type BackendID string
 

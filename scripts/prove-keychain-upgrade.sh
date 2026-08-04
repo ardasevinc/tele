@@ -25,7 +25,7 @@ instance=$(uuidgen | tr '[:upper:]' '[:lower:]')
 
 build_fixture() {
   local name=$1 build_id=$2
-  go build -trimpath -buildvcs=false \
+  CGO_ENABLED=0 GOOS=darwin GOARCH="$(go env GOARCH)" go build -trimpath -buildvcs=false \
     -ldflags "-s -w -buildid= -X main.buildID=$build_id" \
     -o "$evidence/$name" ./internal/secrets/testdata/keychain-upgrade-fixture
   chmod 0755 "$evidence/$name"

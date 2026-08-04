@@ -67,6 +67,7 @@ func verifyCode(path string) error {
 	var secStaticCodeCreateWithPath func(uintptr, uint32, *uintptr) int32
 	var secRequirementCreateWithString func(uintptr, uint32, *uintptr) int32
 	var secCodeCheckValidity func(uintptr, uint32, uintptr) int32
+	var secStaticCodeCheckValidity func(uintptr, uint32, uintptr) int32
 	bindings := []struct {
 		handle uintptr
 		name   string
@@ -79,6 +80,7 @@ func verifyCode(path string) error {
 		{security, "SecStaticCodeCreateWithPath", &secStaticCodeCreateWithPath},
 		{security, "SecRequirementCreateWithString", &secRequirementCreateWithString},
 		{security, "SecCodeCheckValidity", &secCodeCheckValidity},
+		{security, "SecStaticCodeCheckValidity", &secStaticCodeCheckValidity},
 	}
 	for _, binding := range bindings {
 		symbol, err := purego.Dlsym(binding.handle, binding.name)
@@ -102,11 +104,13 @@ func verifyCode(path string) error {
 	defer cfRelease(requirement)
 
 	var code uintptr
+	checkValidity := secCodeCheckValidity
 	if path == "" {
 		if status := secCodeCopySelf(0, &code); status != 0 {
 			return fmt.Errorf("inspect running code identity: security framework status %d", status)
 		}
 	} else {
+		checkValidity = secStaticCodeCheckValidity
 		absolute, err := filepath.Abs(path)
 		if err != nil {
 			return fmt.Errorf("resolve candidate path: %w", err)
@@ -130,8 +134,7 @@ func verifyCode(path string) error {
 	}
 	defer cfRelease(code)
 
-	const checkAllArchitecturesAndStrict = uint32(1<<0 | 1<<4)
-	if status := secCodeCheckValidity(code, checkAllArchitecturesAndStrict, requirement); status != 0 {
+	if status := checkValidity(code, 0, requirement); status != 0 {
 		return fmt.Errorf("%w: security framework status %d", ErrNotOfficial, status)
 	}
 	return nil

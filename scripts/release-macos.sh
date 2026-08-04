@@ -70,8 +70,12 @@ verify_signed_binary() {
   grep -Fq 'Timestamp=' <<<"$details"
   requirement=$(codesign -dr - "$binary" 2>&1 | sed -n 's/^designated => //p')
   [[ $requirement == "$REQUIREMENT" ]] || { echo "unexpected designated requirement for $binary" >&2; exit 1; }
-  [[ $("$binary" internal official-build) == tele-official-build-v1 ]]
-  [[ $("$binary" --version) == "tele version $version ($commit)" ]]
+  local host_arch
+  host_arch=$(uname -m)
+  if [[ ( $host_arch == arm64 && $binary == *_arm64 ) || ( $host_arch == x86_64 && $binary == *_amd64 ) ]]; then
+    [[ $("$binary" internal official-build) == tele-official-build-v1 ]]
+    [[ $("$binary" --version) == "tele version $version ($commit)" ]]
+  fi
 }
 
 echo 'signing final Darwin binaries'

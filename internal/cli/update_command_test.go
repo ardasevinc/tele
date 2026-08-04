@@ -50,6 +50,8 @@ func TestUpdateCheckAndExplicitApply(t *testing.T) {
 		Smoke: func(context.Context, string) (string, error) {
 			return "tele version 1.2.0 (module v1.2.0)\n", nil
 		},
+		RequireOfficialCandidate: func() bool { return false },
+		VerifyCandidate:          func(string) error { return nil },
 	}
 
 	var stdout, stderr bytes.Buffer

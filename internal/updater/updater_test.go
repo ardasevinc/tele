@@ -30,6 +30,7 @@ func TestCheckUsesImmutableStableReleaseAndExactGoTarget(t *testing.T) {
 			}
 			return "", fmt.Errorf("unexpected go env %s", key)
 		},
+		RequireOfficialCandidate: func() bool { return false },
 	}
 	result, err := client.Check(context.Background(), "1.1.0", "abcdef0123456789")
 	if err != nil {
@@ -39,6 +40,31 @@ func TestCheckUsesImmutableStableReleaseAndExactGoTarget(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 	if result.RecommendedCommand != "go install "+Module+"@v1.2.0" || result.ResolvedPath != bin || result.Applied {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestCheckMakesMacStyleGoInstallCheckOnly(t *testing.T) {
+	server := releaseServer(t, releasePayload("v1.2.0"))
+	defer server.Close()
+	bin := filepath.Join(t.TempDir(), executableName())
+	if err := os.WriteFile(bin, []byte("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{
+		HTTPClient: server.Client(), APIBase: server.URL,
+		Executable:   func() (string, error) { return bin, nil },
+		EvalSymlinks: func(path string) (string, error) { return path, nil },
+		GoEnv: func(context.Context, string) (string, error) {
+			return filepath.Dir(bin), nil
+		},
+		RequireOfficialCandidate: func() bool { return true },
+	}
+	result, err := client.Check(context.Background(), "1.1.0", "abcdef0123456789")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.UpdateSupported || !strings.Contains(result.UnsupportedReason, "signed and notarized") || result.RecommendedCommand != "brew install ardasevinc/tap/tele" {
 		t.Fatalf("result = %+v", result)
 	}
 }
@@ -102,6 +128,12 @@ func TestApplyPinsAndVerifiesGoInstall(t *testing.T) {
 			}
 			return "tele version 1.2.0 (module v1.2.0)\n", nil
 		},
+		VerifyCandidate: func(path string) error {
+			if path != bin {
+				t.Fatalf("candidate path = %q", path)
+			}
+			return nil
+		},
 	}
 	result, err := client.Apply(context.Background(), Result{
 		LatestVersion: "1.2.0", Status: StatusUpdateAvailable, InstallManager: "go-install",
@@ -118,6 +150,35 @@ func TestApplyPinsAndVerifiesGoInstall(t *testing.T) {
 	}
 	if matches, err := filepath.Glob(filepath.Join(filepath.Dir(bin), ".tele-rollback-*")); err != nil || len(matches) != 0 {
 		t.Fatalf("rollback candidates = %v, %v", matches, err)
+	}
+}
+
+func TestApplyRestoresExecutableWhenCandidatePolicyFails(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), executableName())
+	if err := os.WriteFile(bin, []byte("old executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{
+		GoInstall: func(context.Context, string) error {
+			return os.WriteFile(bin, []byte("unsigned or otherwise invalid replacement"), 0o755)
+		},
+		VerifyCandidate: func(path string) error {
+			if path != bin {
+				t.Fatalf("candidate path = %q", path)
+			}
+			return errors.New("signature, identity, or notarization rejected")
+		},
+	}
+	_, err := client.Apply(context.Background(), Result{
+		LatestVersion: "1.2.0", Status: StatusUpdateAvailable, InstallManager: "go-install",
+		UpdateSupported: true, ResolvedPath: bin,
+	}, ApplyOptions{})
+	if err == nil || !strings.Contains(err.Error(), "verify replacement policy") {
+		t.Fatalf("Apply error = %v", err)
+	}
+	body, readErr := os.ReadFile(bin)
+	if readErr != nil || string(body) != "old executable" {
+		t.Fatalf("restored executable = %q, %v; Apply error = %v", body, readErr, err)
 	}
 }
 
@@ -154,6 +215,7 @@ func TestApplyRestoresExecutableOnPreflightOrSmokeFailure(t *testing.T) {
 					}
 					return "tele version 1.2.0 (module v1.2.0)", nil
 				},
+				VerifyCandidate: func(string) error { return nil },
 			}
 			_, err := client.Apply(context.Background(), Result{
 				LatestVersion: "1.2.0", Status: StatusUpdateAvailable, InstallManager: "go-install",

@@ -54,14 +54,16 @@ type Result struct {
 }
 
 type Client struct {
-	HTTPClient   *http.Client
-	APIBase      string
-	Executable   func() (string, error)
-	EvalSymlinks func(string) (string, error)
-	GoEnv        func(context.Context, string) (string, error)
-	GoInstall    func(context.Context, string) error
-	Preflight    func(context.Context, string, ApplyOptions) (string, error)
-	Smoke        func(context.Context, string) (string, error)
+	HTTPClient               *http.Client
+	APIBase                  string
+	Executable               func() (string, error)
+	EvalSymlinks             func(string) (string, error)
+	GoEnv                    func(context.Context, string) (string, error)
+	GoInstall                func(context.Context, string) error
+	Preflight                func(context.Context, string, ApplyOptions) (string, error)
+	Smoke                    func(context.Context, string) (string, error)
+	VerifyCandidate          func(string) error
+	RequireOfficialCandidate func() bool
 }
 
 type ApplyOptions struct {
@@ -109,6 +111,11 @@ func (c *Client) Check(ctx context.Context, currentVersion, currentCommit string
 		result.RecommendedCommand = "gh release view v" + latest + " --repo " + Repository
 	}
 
+	if target.manager == "go-install" && c.requiresOfficialCandidate() && isStableReleaseBuild(currentVersion, currentCommit) {
+		result.UpdateSupported = false
+		result.UnsupportedReason = "macOS automatic replacement requires an official signed and notarized release; use Homebrew"
+		result.RecommendedCommand = "brew install ardasevinc/tap/tele"
+	}
 	if !isStableReleaseBuild(currentVersion, currentCommit) {
 		result.UpdateSupported = false
 		result.UnsupportedReason = "development, dirty, or prerelease builds are check-only"
@@ -140,6 +147,9 @@ func (c *Client) Apply(ctx context.Context, result Result, options ApplyOptions)
 	}
 	if err := c.goInstall(ctx, Module+"@"+tag); err != nil {
 		return rollback(fmt.Errorf("install %s: %w", tag, err))
+	}
+	if err := c.verifyCandidate(result.ResolvedPath); err != nil {
+		return rollback(fmt.Errorf("verify replacement policy for %s: %w", tag, err))
 	}
 	preflightOutput, err := c.preflight(ctx, result.ResolvedPath, options)
 	if err != nil {
@@ -434,6 +444,20 @@ func (c *Client) preflight(ctx context.Context, path string, options ApplyOption
 	args = append(args, "internal", "compatibility")
 	output, err := exec.CommandContext(ctx, path, args...).CombinedOutput() // #nosec G204 -- path is the resolved Go install destination and arguments are fixed or locally selected paths/profile names.
 	return string(output), err
+}
+
+func (c *Client) verifyCandidate(path string) error {
+	if c.VerifyCandidate != nil {
+		return c.VerifyCandidate(path)
+	}
+	return verifyCandidate(path)
+}
+
+func (c *Client) requiresOfficialCandidate() bool {
+	if c.RequireOfficialCandidate != nil {
+		return c.RequireOfficialCandidate()
+	}
+	return requiresOfficialCandidate()
 }
 
 func backupExecutable(path string) (string, error) {

@@ -57,6 +57,16 @@ func TestDeveloperIDCandidatePolicyRealLifecycle(t *testing.T) {
 	}
 }
 
+func TestNotarizedFixtureSatisfiesDistributionPolicy(t *testing.T) {
+	fixture := os.Getenv("TELE_NOTARIZED_FIXTURE")
+	if fixture == "" {
+		t.Skip("TELE_NOTARIZED_FIXTURE is not set")
+	}
+	if err := VerifyOfficialDistribution(fixture); err != nil {
+		t.Fatalf("notarized distribution fixture: %v", err)
+	}
+}
+
 func copySigningFixture(t *testing.T, source, name string) string {
 	t.Helper()
 	target := filepath.Join(t.TempDir(), name)

@@ -278,15 +278,19 @@ reports the running version, source provenance, resolved executable, detected
 install manager, and an exact recommendation. Add `--json` for the stable
 machine result. This command is read-only.
 
-`tele update --yes` mutates only an unambiguous, writable Go installation and
-pins the exact release tag. It retains a same-directory rollback executable,
-requires the candidate to parse the current config and selected vault format,
-verifies its exact module version, and restores the prior executable if either
-check fails. Homebrew installations receive `brew upgrade tele`. Standalone
-archives remain check-only until tele can natively verify GitHub attestations,
-so the reported manual command verifies both `checksums.txt` and the selected
-archive before checking its digest. Development, dirty, prerelease,
-unknown-provenance, and unsupported-platform builds are always check-only.
+On Linux, `tele update --yes` mutates only an unambiguous, writable Go
+installation and pins the exact release tag. It retains a same-directory
+rollback executable, requires the candidate to parse the current config and
+selected vault format, verifies its exact module version, and restores the
+prior executable if either check fails. On macOS, Go-installed binaries are
+check-only because a local Go build cannot satisfy Tele's pinned Developer ID
+and notarization policy; use the official Homebrew release instead. Any macOS
+replacement path fails closed unless the candidate satisfies that policy.
+Homebrew installations receive `brew upgrade tele`. Standalone archives remain
+check-only until tele can natively verify GitHub attestations, so the reported
+manual command verifies both `checksums.txt` and the selected archive before
+checking its digest. Development, dirty, prerelease, unknown-provenance, and
+unsupported-platform builds are always check-only.
 
 ## Untrusted content
 
@@ -328,8 +332,10 @@ golangci-lint, gosec, govulncheck, module verification, supported macOS/Linux
 builds, a Windows compile smoke, and diff checks. CI adds real Secret Service
 and Keychain lifecycle tests plus packaged static-Linux runtime smoke tests.
 
-Release archives are deterministic, checksummed, and provenance-attested. See
-[`docs/releasing.md`](docs/releasing.md) for the tag and verification contract,
+Linux release archives and unsigned macOS inputs are reproducible. Final macOS
+archives contain the exact Developer ID-signed, hardened, timestamped, and
+notarized binaries; checksums and GitHub attestations cover those final bytes.
+See [`docs/releasing.md`](docs/releasing.md) for the tag and verification contract,
 [`SECURITY.md`](SECURITY.md) for private vulnerability reporting, and
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for development boundaries.
 

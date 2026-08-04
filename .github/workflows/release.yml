@@ -1,8 +1,12 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag with a complete trusted-Mac draft release
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -11,118 +15,181 @@ permissions:
   attestations: write
   artifact-metadata: write
 
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag }}
+  REQUIREMENT: identifier "com.ardasevinc.tele" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = J3S8HNBXSU
+
 jobs:
-  release:
-    name: Reproducible release
+  reproducible:
+    name: Reproducible inputs and Linux final bytes
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    outputs:
+      artifact_set_digest: ${{ steps.assets.outputs.digest }}
+      release_id: ${{ steps.release.outputs.id }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.tag }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
-      - name: Validate tag and source version
+      - name: Validate tag, source, main, and exact-head CI
         id: version
-        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          test "$GITHUB_REF_NAME" = "v$version"
-          source_version="$(awk -F'"' '/^[[:space:]]*Version = / {print $2}' internal/buildinfo/buildinfo.go)"
-          test "$version" = "$source_version"
-          if [[ "$version" == *-* ]]; then prerelease=true; else prerelease=false; fi
-          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-          printf 'prerelease=%s\n' "$prerelease" >> "$GITHUB_OUTPUT"
-      - name: Require the tagged commit on main
-        run: |
+          test "$GITHUB_REF_NAME" = "$RELEASE_TAG"
+          version="${RELEASE_TAG#v}"
+          test "$RELEASE_TAG" = "v$version"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(awk -F'\"' '/^[[:space:]]*Version = / {print $2}' internal/buildinfo/buildinfo.go)" = "$version"
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-      - name: Require successful CI for the tagged commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
           conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=completed" --jq '.workflow_runs | sort_by(.created_at) | last | .conclusion')"
           test "$conclusion" = success
-      - name: Reject an existing release
+          if [[ "$version" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          printf 'version=%s\nprerelease=%s\n' "$version" "$prerelease" >> "$GITHUB_OUTPUT"
+      - name: Require one complete draft release
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          release_id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n 1)"
-          if [[ -n "$release_id" ]]; then
-            echo "release $GITHUB_REF_NAME already exists" >&2
-            exit 1
-          fi
+          release="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == \"$RELEASE_TAG\")")"
+          test "$(jq -r '.draft' <<<"$release")" = true
+          release_id="$(jq -er '.id' <<<"$release")"
+          printf 'id=%s\n' "$release_id" >> "$GITHUB_OUTPUT"
+      - name: Download and validate the closed artifact set
+        id: assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir dist
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist
+          printf '%s\n' \
+            checksums.txt final-binary-checksums.txt notarization-log.json notarization.json release-manifest.json unsigned-checksums.txt \
+            "tele_${VERSION}_darwin_amd64.tar.gz" "tele_${VERSION}_darwin_arm64.tar.gz" \
+            "tele_${VERSION}_linux_amd64.tar.gz" "tele_${VERSION}_linux_arm64.tar.gz" | sort > expected-assets
+          find dist -maxdepth 1 -type f -exec basename {} \; | sort > actual-assets
+          diff -u expected-assets actual-assets
+          (cd dist && sha256sum --check checksums.txt)
+          jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" \
+            '.schema == "tele-release-v1" and .version == $version and .commit == $commit and .claims.unsigned_inputs_reproducible == true and .claims.darwin_final_bytes_signed == true and .claims.darwin_final_bytes_notarized == true and .claims.linux_final_bytes_match_reproducible_inputs == true' \
+            dist/release-manifest.json >/dev/null
+          jq -e '.data.attributes.status == "Accepted"' dist/notarization.json >/dev/null
+          jq -e '.status == "Accepted" and (.issues | length) == 0' dist/notarization-log.json >/dev/null
+          (cd dist && sha256sum ./* | sort | sha256sum | awk '{print "digest=" $1}' >> "$GITHUB_OUTPUT")
       - name: Restore dependencies
         run: go mod download
-      - name: Test release source
+      - name: Reproduce unsigned inputs twice and match Linux release bytes
         env:
           GOPROXY: "off"
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          go test -race ./...
-          go vet ./...
-      - name: Build deterministic archives twice
+          GOCACHE="$RUNNER_TEMP/gocache-a" go run ./scripts/release --version "$VERSION" --commit "$GITHUB_SHA" --output repro-a --binary-output unsigned-a
+          GOCACHE="$RUNNER_TEMP/gocache-b" go run ./scripts/release --version "$VERSION" --commit "$GITHUB_SHA" --output repro-b --binary-output unsigned-b
+          diff -r unsigned-a unsigned-b
+          diff -r repro-a repro-b
+          (cd unsigned-a && sha256sum tele_* | sort) > unsigned-checksums.txt
+          diff -u dist/unsigned-checksums.txt unsigned-checksums.txt
+          cmp "dist/tele_${VERSION}_linux_amd64.tar.gz" "repro-a/tele_${VERSION}_linux_amd64.tar.gz"
+          cmp "dist/tele_${VERSION}_linux_arm64.tar.gz" "repro-a/tele_${VERSION}_linux_arm64.tar.gz"
+      - name: Verify Linux final runtime
         env:
-          GOPROXY: "off"
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          GOCACHE="$RUNNER_TEMP/gocache-a" go run ./scripts/release --version "${{ steps.version.outputs.version }}" --commit "$GITHUB_SHA" --output dist
-          GOCACHE="$RUNNER_TEMP/gocache-b" go run ./scripts/release --version "${{ steps.version.outputs.version }}" --commit "$GITHUB_SHA" --output repro
-          diff -r dist repro
-      - name: Verify checksums and Linux smoke
-        run: |
-          cd dist
-          sha256sum --check checksums.txt
           mkdir "$RUNNER_TEMP/tele-smoke"
-          tar -xzf "tele_${{ steps.version.outputs.version }}_linux_amd64.tar.gz" -C "$RUNNER_TEMP/tele-smoke"
+          tar -xzf "dist/tele_${VERSION}_linux_amd64.tar.gz" -C "$RUNNER_TEMP/tele-smoke"
           file "$RUNNER_TEMP/tele-smoke/tele" | grep -q 'statically linked'
-          test "$("$RUNNER_TEMP/tele-smoke/tele" --version)" = "tele version ${{ steps.version.outputs.version }} ($GITHUB_SHA)"
-          "$GITHUB_WORKSPACE/.github/scripts/smoke-linux-release.sh" \
-            "$RUNNER_TEMP/tele-smoke" "${{ steps.version.outputs.version }}" "$GITHUB_SHA"
-      - name: Attest release artifacts
+          test "$("$RUNNER_TEMP/tele-smoke/tele" --version)" = "tele version $VERSION ($GITHUB_SHA)"
+          "$GITHUB_WORKSPACE/.github/scripts/smoke-linux-release.sh" "$RUNNER_TEMP/tele-smoke" "$VERSION" "$GITHUB_SHA"
+
+  macos:
+    name: Final Darwin signature and notarization
+    runs-on: macos-26
+    timeout-minutes: 20
+    outputs:
+      artifact_set_digest: ${{ steps.assets.outputs.digest }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - name: Download the draft assets
+        id: assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir dist
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist
+          (cd dist && shasum -a 256 ./* | sort | shasum -a 256 | awk '{print "digest=" $1}' >> "$GITHUB_OUTPUT")
+      - name: Verify final Darwin bytes
+        run: |
+          version="${RELEASE_TAG#v}"
+          for arch in amd64 arm64; do
+            extract="$RUNNER_TEMP/$arch"
+            mkdir "$extract"
+            tar -xzf "dist/tele_${version}_darwin_${arch}.tar.gz" -C "$extract"
+            binary="$extract/tele"
+            codesign --verify --strict --verbose=2 "$binary"
+            codesign --verify --strict --check-notarization -R=notarized --verbose=2 "$binary"
+            codesign --verify --strict -R="$REQUIREMENT" --verbose=2 "$binary"
+            details="$(codesign -dvvv "$binary" 2>&1)"
+            grep -Fq 'Identifier=com.ardasevinc.tele' <<<"$details"
+            grep -Fq 'TeamIdentifier=J3S8HNBXSU' <<<"$details"
+            grep -Fq 'Authority=Developer ID Application: ARDA SEVINC (J3S8HNBXSU)' <<<"$details"
+            grep -Fq 'Runtime Version=' <<<"$details"
+            grep -Fq 'Timestamp=' <<<"$details"
+            test "$(codesign -dr - "$binary" 2>&1 | sed -n 's/^designated => //p')" = "$REQUIREMENT"
+            if [[ ( $(uname -m) == arm64 && $arch == arm64 ) || ( $(uname -m) == x86_64 && $arch == amd64 ) ]]; then
+              test "$("$binary" internal official-build)" = tele-official-build-v1
+              test "$("$binary" --version)" = "tele version $version ($GITHUB_SHA)"
+            fi
+            expected="$(awk -v name="tele_darwin_$arch" '$2 == name {print $1}' dist/final-binary-checksums.txt)"
+            test "$(shasum -a 256 "$binary" | awk '{print $1}')" = "$expected"
+          done
+
+  publish:
+    name: Attest exact bytes and publish
+    needs: [reproducible, macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Re-download and lock the verified artifact set
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir dist
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist
+          digest="$(cd dist && sha256sum ./* | sort | sha256sum | awk '{print $1}')"
+          test "$digest" = "${{ needs.reproducible.outputs.artifact_set_digest }}"
+          test "$digest" = "${{ needs.macos.outputs.artifact_set_digest }}"
+      - name: Attest final release assets
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: "dist/*"
-      - name: Verify release attestations
+      - name: Verify attestations and publish the unchanged draft
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.reproducible.outputs.release_id }}
+          PRERELEASE: ${{ needs.reproducible.outputs.prerelease }}
         run: |
           for artifact in dist/*; do
             gh attestation verify "$artifact" --repo "$GITHUB_REPOSITORY"
           done
-      - name: Prepare authored release notes
-        id: notes
-        shell: bash
-        run: |
-          source="docs/releases/${{ steps.version.outputs.version }}.md"
-          target="$RUNNER_TEMP/release-notes.md"
-          if [[ -f "$source" ]]; then cp "$source" "$target"; else : > "$target"; fi
-          printf 'path=%s\n' "$target" >> "$GITHUB_OUTPUT"
-      - name: Create complete draft release
-        id: create_release
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
-        with:
-          body_path: ${{ steps.notes.outputs.path }}
-          files: dist/*
-          fail_on_unmatched_files: true
-          generate_release_notes: true
-          draft: true
-          overwrite_files: false
-          prerelease: ${{ steps.version.outputs.prerelease }}
-      - name: Verify assets and publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ steps.create_release.outputs.id }}
-        run: |
-          find dist -maxdepth 1 -type f -exec basename {} \; | sort > "$RUNNER_TEMP/expected-assets"
-          test -n "$RELEASE_ID"
-          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.assets[].name' | sort > "$RUNNER_TEMP/actual-assets"
-          diff -u "$RUNNER_TEMP/expected-assets" "$RUNNER_TEMP/actual-assets"
-          if [[ "${{ steps.version.outputs.prerelease }}" == true ]]; then latest=false; else latest=true; fi
-          git rev-parse --verify "refs/tags/$GITHUB_REF_NAME^{commit}"
+          (cd dist && sha256sum ./* | sort | sed 's/^/sha256:/; s#  \./#  #') > expected-digests
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            --jq '.assets[] | "\(.digest)  \(.name)"' | sort > actual-digests
+          diff -u expected-digests actual-digests
+          if [[ "$PRERELEASE" == true ]]; then latest=false; else latest=true; fi
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
-            -F draft=false \
-            -F prerelease="${{ steps.version.outputs.prerelease }}" \
-            -f make_latest="$latest" >/dev/null
+            -F draft=false -F prerelease="$PRERELEASE" -f make_latest="$latest" >/dev/null

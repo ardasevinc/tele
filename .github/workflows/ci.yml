@@ -49,6 +49,8 @@ jobs:
         env:
           GOPROXY: "off"
         run: go vet ./...
+      - name: Validate release shell
+        run: bash -n scripts/release-macos.sh scripts/publish-release-candidate.sh
       - name: Package and smoke release archives
         env:
           GOPROXY: "off"

@@ -12,7 +12,7 @@ func TestLoadSecurityFrameworkKeychain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if api.secClass == 0 || api.secClassGenericPassword == 0 || api.cfBooleanTrue == 0 {
+	if api.secClass == 0 || api.secClassGenericPassword == 0 || api.secAttrAccess == 0 || api.cfBooleanTrue == 0 {
 		t.Fatal("Security.framework bindings contain a nil constant")
 	}
 }
@@ -22,6 +22,7 @@ func TestClassifySecurityStatus(t *testing.T) {
 		-67869: ErrBackendLocked,
 		-25308: ErrInteractionRequired,
 		-25293: ErrAccessDenied,
+		-25244: ErrAccessDenied,
 		-128:   ErrInteractionCanceled,
 		-25291: ErrBackendUnavailable,
 	} {

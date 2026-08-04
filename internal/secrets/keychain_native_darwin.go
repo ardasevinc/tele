@@ -25,12 +25,14 @@ type securityFrameworkKeychain struct {
 	secItemUpdate              func(uintptr, uintptr) int32
 	secItemCopyMatching        func(uintptr, *uintptr) int32
 	secItemDelete              func(uintptr) int32
+	secAccessCreate            func(uintptr, uintptr, *uintptr) int32
 	dictionaryKeyCallbacks     uintptr
 	dictionaryValueCallbacks   uintptr
 	secClass                   uintptr
 	secClassGenericPassword    uintptr
 	secAttrService             uintptr
 	secAttrAccount             uintptr
+	secAttrAccess              uintptr
 	secValueData               uintptr
 	secReturnData              uintptr
 	secMatchLimit              uintptr
@@ -85,6 +87,7 @@ func loadSecurityFrameworkKeychain() (*securityFrameworkKeychain, error) {
 		{security, "SecItemUpdate", &api.secItemUpdate},
 		{security, "SecItemCopyMatching", &api.secItemCopyMatching},
 		{security, "SecItemDelete", &api.secItemDelete},
+		{security, "SecAccessCreate", &api.secAccessCreate},
 		{purego.RTLD_DEFAULT, "memcpy", &copyReference},
 		{purego.RTLD_DEFAULT, "memcpy", &api.copyBytes},
 	}
@@ -108,6 +111,7 @@ func loadSecurityFrameworkKeychain() (*securityFrameworkKeychain, error) {
 		{security, "kSecClassGenericPassword", &api.secClassGenericPassword},
 		{security, "kSecAttrService", &api.secAttrService},
 		{security, "kSecAttrAccount", &api.secAttrAccount},
+		{security, "kSecAttrAccess", &api.secAttrAccess},
 		{security, "kSecValueData", &api.secValueData},
 		{security, "kSecReturnData", &api.secReturnData},
 		{security, "kSecMatchLimit", &api.secMatchLimit},
@@ -151,7 +155,12 @@ func (s *securityFrameworkKeychain) Create(ctx context.Context, account string, 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	query, release, err := s.itemDictionary(account, value, true)
+	access, err := s.newItemAccess(account)
+	if err != nil {
+		return err
+	}
+	defer s.cfRelease(access)
+	query, release, err := s.itemDictionary(account, value, true, access)
 	if err != nil {
 		return err
 	}
@@ -167,7 +176,7 @@ func (s *securityFrameworkKeychain) Replace(ctx context.Context, account string,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	query, releaseQuery, err := s.itemDictionary(account, nil, false)
+	query, releaseQuery, err := s.itemDictionary(account, nil, false, 0)
 	if err != nil {
 		return err
 	}
@@ -249,7 +258,7 @@ func (s *securityFrameworkKeychain) Exists(ctx context.Context, account string) 
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	query, release, err := s.itemDictionary(account, nil, false)
+	query, release, err := s.itemDictionary(account, nil, false, 0)
 	if err != nil {
 		return false, err
 	}
@@ -271,7 +280,7 @@ func (s *securityFrameworkKeychain) Delete(ctx context.Context, account string) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	query, release, err := s.itemDictionary(account, nil, false)
+	query, release, err := s.itemDictionary(account, nil, false, 0)
 	if err != nil {
 		return err
 	}
@@ -283,7 +292,7 @@ func (s *securityFrameworkKeychain) Delete(ctx context.Context, account string) 
 	return classifySecurityStatus(status)
 }
 
-func (s *securityFrameworkKeychain) itemDictionary(account string, value []byte, includeValue bool) (uintptr, func(), error) {
+func (s *securityFrameworkKeychain) itemDictionary(account string, value []byte, includeValue bool, access uintptr) (uintptr, func(), error) {
 	service, err := s.newString(nativeKeychainService)
 	if err != nil {
 		return 0, nil, err
@@ -307,6 +316,10 @@ func (s *securityFrameworkKeychain) itemDictionary(account string, value []byte,
 		keys = append(keys, s.secValueData)
 		values = append(values, data)
 	}
+	if access != 0 {
+		keys = append(keys, s.secAttrAccess)
+		values = append(values, access)
+	}
 	dictionary, err := s.newDictionary(keys, values)
 	if err != nil {
 		for _, ref := range owned {
@@ -321,6 +334,22 @@ func (s *securityFrameworkKeychain) itemDictionary(account string, value []byte,
 		}
 	}
 	return dictionary, release, nil
+}
+
+func (s *securityFrameworkKeychain) newItemAccess(account string) (uintptr, error) {
+	descriptor, err := s.newString("Tele secret " + account)
+	if err != nil {
+		return 0, err
+	}
+	defer s.cfRelease(descriptor)
+	var access uintptr
+	if status := s.secAccessCreate(descriptor, 0, &access); status != 0 {
+		return 0, fmt.Errorf("SecAccessCreate failed: security framework status %d", status)
+	}
+	if access == 0 {
+		return 0, fmt.Errorf("SecAccessCreate returned nil access")
+	}
+	return access, nil
 }
 
 func (s *securityFrameworkKeychain) newString(value string) (uintptr, error) {
@@ -366,6 +395,8 @@ func classifySecurityStatus(status int32) error {
 	case -25308:
 		return &BackendError{Kind: ErrInteractionRequired, Backend: BackendKeychain}
 	case -25293:
+		return &BackendError{Kind: ErrAccessDenied, Backend: BackendKeychain}
+	case -25244:
 		return &BackendError{Kind: ErrAccessDenied, Backend: BackendKeychain}
 	case -128:
 		return &BackendError{Kind: ErrInteractionCanceled, Backend: BackendKeychain}

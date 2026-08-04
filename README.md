@@ -44,7 +44,7 @@ macOS arm64 example requires the GitHub CLI:
 ```sh
 (
   set -eu
-  version=1.2.1
+  version=1.2.2
   asset="tele_${version}_darwin_arm64.tar.gz"
   tmp="$(mktemp -d)"
   cd "$tmp"
@@ -65,10 +65,10 @@ platform.
 Install the pinned stable version through the Go module proxy:
 
 ```sh
-go install github.com/ardasevinc/tele/cmd/tele@v1.2.1
+go install github.com/ardasevinc/tele/cmd/tele@v1.2.2
 ```
 
-To intentionally follow the newest published version, replace `@v1.2.1` with
+To intentionally follow the newest published version, replace `@v1.2.2` with
 `@latest`. Go-installed binaries report their module version as provenance;
 release archives and local-checkout installs report the exact source commit.
 
@@ -109,6 +109,13 @@ before creating or opening that backend. Ad-hoc, source, and `go install`
 builds must use `vault-v1`. If a provider is missing, headless, locked, or the
 running build is not eligible, tele returns a typed backend error rather than
 switching storage behind your back.
+
+macOS users upgrading a Keychain-backed profile from v1.2.0 or v1.2.1 should
+first use the exact currently authorized old binary to migrate that profile to
+`vault-v1`. Retain the source instance and migration receipt. After installing
+v1.2.2, the official signed binary may initialize a fresh `keychain-v1`
+instance and migrate the verified vault into it. Do not delete old Keychain
+items or repeatedly approve access dialogs as an upgrade strategy.
 
 For one-shot interactive login, `tele auth login` still works.
 

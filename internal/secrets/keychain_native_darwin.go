@@ -20,12 +20,19 @@ type securityFrameworkKeychain struct {
 	cfDataGetBytePtr           func(uintptr) *byte
 	cfDataGetTypeID            func() uintptr
 	cfGetTypeID                func(uintptr) uintptr
+	cfArrayCreate              func(uintptr, *uintptr, int64, uintptr) uintptr
+	cfArrayGetCount            func(uintptr) int64
+	cfArrayGetValueAtIndex     func(uintptr, int64) uintptr
 	cfDictionaryCreate         func(uintptr, *uintptr, *uintptr, int64, uintptr, uintptr) uintptr
 	secItemAdd                 func(uintptr, *uintptr) int32
 	secItemUpdate              func(uintptr, uintptr) int32
 	secItemCopyMatching        func(uintptr, *uintptr) int32
 	secItemDelete              func(uintptr) int32
 	secAccessCreate            func(uintptr, uintptr, *uintptr) int32
+	secAccessCopyMatchingACLs  func(uintptr, uintptr) uintptr
+	secACLSetContents          func(uintptr, uintptr, uintptr, uint16) int32
+	secTrustedAppCreate        func(*byte, *uintptr) int32
+	arrayCallbacks             uintptr
 	dictionaryKeyCallbacks     uintptr
 	dictionaryValueCallbacks   uintptr
 	secClass                   uintptr
@@ -39,6 +46,7 @@ type securityFrameworkKeychain struct {
 	secMatchLimitOne           uintptr
 	secUseAuthenticationUI     uintptr
 	secUseAuthenticationUIFail uintptr
+	secAuthorizationChangeACL  uintptr
 	cfBooleanTrue              uintptr
 	copyBytes                  func(*byte, *byte, uintptr) *byte
 }
@@ -82,12 +90,18 @@ func loadSecurityFrameworkKeychain() (*securityFrameworkKeychain, error) {
 		{coreFoundation, "CFDataGetBytePtr", &api.cfDataGetBytePtr},
 		{coreFoundation, "CFDataGetTypeID", &api.cfDataGetTypeID},
 		{coreFoundation, "CFGetTypeID", &api.cfGetTypeID},
+		{coreFoundation, "CFArrayCreate", &api.cfArrayCreate},
+		{coreFoundation, "CFArrayGetCount", &api.cfArrayGetCount},
+		{coreFoundation, "CFArrayGetValueAtIndex", &api.cfArrayGetValueAtIndex},
 		{coreFoundation, "CFDictionaryCreate", &api.cfDictionaryCreate},
 		{security, "SecItemAdd", &api.secItemAdd},
 		{security, "SecItemUpdate", &api.secItemUpdate},
 		{security, "SecItemCopyMatching", &api.secItemCopyMatching},
 		{security, "SecItemDelete", &api.secItemDelete},
 		{security, "SecAccessCreate", &api.secAccessCreate},
+		{security, "SecAccessCopyMatchingACLList", &api.secAccessCopyMatchingACLs},
+		{security, "SecACLSetContents", &api.secACLSetContents},
+		{security, "SecTrustedApplicationCreateFromPath", &api.secTrustedAppCreate},
 		{purego.RTLD_DEFAULT, "memcpy", &copyReference},
 		{purego.RTLD_DEFAULT, "memcpy", &api.copyBytes},
 	}
@@ -95,6 +109,9 @@ func loadSecurityFrameworkKeychain() (*securityFrameworkKeychain, error) {
 		if err := bindFrameworkFunction(binding.handle, binding.name, binding.target); err != nil {
 			return nil, err
 		}
+	}
+	if api.arrayCallbacks, err = purego.Dlsym(coreFoundation, "kCFTypeArrayCallBacks"); err != nil {
+		return nil, err
 	}
 	if api.dictionaryKeyCallbacks, err = purego.Dlsym(coreFoundation, "kCFTypeDictionaryKeyCallBacks"); err != nil {
 		return nil, err
@@ -118,6 +135,7 @@ func loadSecurityFrameworkKeychain() (*securityFrameworkKeychain, error) {
 		{security, "kSecMatchLimitOne", &api.secMatchLimitOne},
 		{security, "kSecUseAuthenticationUI", &api.secUseAuthenticationUI},
 		{security, "kSecUseAuthenticationUIFail", &api.secUseAuthenticationUIFail},
+		{security, "kSecACLAuthorizationChangeACL", &api.secAuthorizationChangeACL},
 		{coreFoundation, "kCFBooleanTrue", &api.cfBooleanTrue},
 	}
 	for _, constant := range constants {
@@ -342,12 +360,44 @@ func (s *securityFrameworkKeychain) newItemAccess(account string) (uintptr, erro
 		return 0, err
 	}
 	defer s.cfRelease(descriptor)
+	var trustedApplication uintptr
+	if status := s.secTrustedAppCreate(nil, &trustedApplication); status != 0 {
+		return 0, fmt.Errorf("SecTrustedApplicationCreateFromPath failed: security framework status %d", status)
+	}
+	if trustedApplication == 0 {
+		return 0, fmt.Errorf("SecTrustedApplicationCreateFromPath returned nil application")
+	}
+	defer s.cfRelease(trustedApplication)
+	trustedApplications := s.cfArrayCreate(0, &trustedApplication, 1, s.arrayCallbacks)
+	if trustedApplications == 0 {
+		return 0, fmt.Errorf("CFArrayCreate failed for trusted application")
+	}
+	defer s.cfRelease(trustedApplications)
 	var access uintptr
-	if status := s.secAccessCreate(descriptor, 0, &access); status != 0 {
+	if status := s.secAccessCreate(descriptor, trustedApplications, &access); status != 0 {
 		return 0, fmt.Errorf("SecAccessCreate failed: security framework status %d", status)
 	}
 	if access == 0 {
 		return 0, fmt.Errorf("SecAccessCreate returned nil access")
+	}
+	ownerACLs := s.secAccessCopyMatchingACLs(access, s.secAuthorizationChangeACL)
+	if ownerACLs == 0 {
+		s.cfRelease(access)
+		return 0, fmt.Errorf("SecAccessCopyMatchingACLList returned nil owner ACL list")
+	}
+	defer s.cfRelease(ownerACLs)
+	if count := s.cfArrayGetCount(ownerACLs); count != 1 {
+		s.cfRelease(access)
+		return 0, fmt.Errorf("SecAccessCopyMatchingACLList returned %d owner ACLs", count)
+	}
+	ownerACL := s.cfArrayGetValueAtIndex(ownerACLs, 0)
+	if ownerACL == 0 {
+		s.cfRelease(access)
+		return 0, fmt.Errorf("SecAccessCopyMatchingACLList returned nil owner ACL")
+	}
+	if status := s.secACLSetContents(ownerACL, trustedApplications, descriptor, 0); status != 0 {
+		s.cfRelease(access)
+		return 0, fmt.Errorf("SecACLSetContents failed: security framework status %d", status)
 	}
 	return access, nil
 }

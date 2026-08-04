@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"unsafe"
 
 	"github.com/ebitengine/purego"
 )
@@ -18,7 +17,7 @@ type securityFrameworkKeychain struct {
 	cfStringCreate             func(uintptr, string, uint32) uintptr
 	cfDataCreate               func(uintptr, *byte, int64) uintptr
 	cfDataGetLength            func(uintptr) int64
-	cfDataGetBytePtr           func(uintptr) uintptr
+	cfDataGetBytePtr           func(uintptr) *byte
 	cfDataGetTypeID            func() uintptr
 	cfGetTypeID                func(uintptr) uintptr
 	cfDictionaryCreate         func(uintptr, *uintptr, *uintptr, int64, uintptr, uintptr) uintptr
@@ -39,6 +38,7 @@ type securityFrameworkKeychain struct {
 	secUseAuthenticationUI     uintptr
 	secUseAuthenticationUIFail uintptr
 	cfBooleanTrue              uintptr
+	copyBytes                  func(*byte, *byte, uintptr) *byte
 }
 
 var (
@@ -67,6 +67,7 @@ func loadSecurityFrameworkKeychain() (*securityFrameworkKeychain, error) {
 		return nil, fmt.Errorf("load Security.framework: %w", err)
 	}
 	api := &securityFrameworkKeychain{}
+	var copyReference func(*uintptr, uintptr, uintptr) *uintptr
 	bindings := []struct {
 		handle uintptr
 		name   string
@@ -84,6 +85,8 @@ func loadSecurityFrameworkKeychain() (*securityFrameworkKeychain, error) {
 		{security, "SecItemUpdate", &api.secItemUpdate},
 		{security, "SecItemCopyMatching", &api.secItemCopyMatching},
 		{security, "SecItemDelete", &api.secItemDelete},
+		{purego.RTLD_DEFAULT, "memcpy", &copyReference},
+		{purego.RTLD_DEFAULT, "memcpy", &api.copyBytes},
 	}
 	for _, binding := range bindings {
 		if err := bindFrameworkFunction(binding.handle, binding.name, binding.target); err != nil {
@@ -114,7 +117,7 @@ func loadSecurityFrameworkKeychain() (*securityFrameworkKeychain, error) {
 		{coreFoundation, "kCFBooleanTrue", &api.cfBooleanTrue},
 	}
 	for _, constant := range constants {
-		if *constant.target, err = loadFrameworkReference(constant.handle, constant.name); err != nil {
+		if *constant.target, err = loadFrameworkReference(constant.handle, constant.name, copyReference); err != nil {
 			return nil, err
 		}
 	}
@@ -130,12 +133,14 @@ func bindFrameworkFunction(handle uintptr, name string, target any) error {
 	return nil
 }
 
-func loadFrameworkReference(handle uintptr, name string) (uintptr, error) {
+func loadFrameworkReference(handle uintptr, name string, copyReference func(*uintptr, uintptr, uintptr) *uintptr) (uintptr, error) {
 	symbol, err := purego.Dlsym(handle, name)
 	if err != nil {
 		return 0, fmt.Errorf("resolve %s: %w", name, err)
 	}
-	reference := *(*uintptr)(unsafe.Pointer(symbol))
+	var reference uintptr
+	const pointerSize uintptr = 8 // Supported Darwin targets are amd64 and arm64.
+	copyReference(&reference, symbol, pointerSize)
 	if reference == 0 {
 		return 0, fmt.Errorf("resolve %s: nil reference", name)
 	}
@@ -232,10 +237,12 @@ func (s *securityFrameworkKeychain) Get(ctx context.Context, account string) ([]
 		return []byte{}, nil
 	}
 	pointer := s.cfDataGetBytePtr(result)
-	if pointer == 0 {
+	if pointer == nil {
 		return nil, fmt.Errorf("CFDataGetBytePtr returned nil")
 	}
-	return append([]byte(nil), unsafe.Slice((*byte)(unsafe.Pointer(pointer)), int(length))...), nil
+	value := make([]byte, int(length))
+	s.copyBytes(&value[0], pointer, uintptr(length))
+	return value, nil
 }
 
 func (s *securityFrameworkKeychain) Delete(ctx context.Context, account string) error {
@@ -337,6 +344,6 @@ func classifySecurityStatus(status int32) error {
 	case -25299:
 		return fmt.Errorf("keychain item already exists")
 	default:
-		return fmt.Errorf("Security.framework status %d", status)
+		return fmt.Errorf("security framework status %d", status)
 	}
 }

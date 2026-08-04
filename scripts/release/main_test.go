@@ -83,9 +83,99 @@ func TestReleaseArgumentsAreClosed(t *testing.T) {
 		{"1.2.3", "ABCDEF0", t.TempDir(), "release commit"},
 		{"1.2.3", "abcdef0", "", "output directory"},
 	} {
-		err := run(tc.version, tc.commit, tc.output)
+		err := run(tc.version, tc.commit, tc.output, "", "")
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("version=%q commit=%q output=%q err=%v", tc.version, tc.commit, tc.output, err)
+		}
+	}
+}
+
+func TestRunPackagesExactPrebuiltBytes(t *testing.T) {
+	chdirRepositoryRoot(t)
+	inputs := t.TempDir()
+	for _, target := range releaseTargets {
+		name := "tele_" + target.os + "_" + target.arch
+		if err := os.WriteFile(filepath.Join(inputs, name), []byte("exact-"+name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := t.TempDir()
+	if err := run("1.2.3", "abcdef0", output, inputs, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range releaseTargets {
+		archivePath := filepath.Join(output, "tele_1.2.3_"+target.os+"_"+target.arch+".tar.gz")
+		payload := archiveEntry(t, archivePath, "tele")
+		want := "exact-tele_" + target.os + "_" + target.arch
+		if string(payload) != want {
+			t.Fatalf("%s payload = %q, want %q", archivePath, payload, want)
+		}
+	}
+}
+
+func TestRunRejectsUnsafePrebuiltInputs(t *testing.T) {
+	chdirRepositoryRoot(t)
+	inputs := t.TempDir()
+	first := releaseTargets[0]
+	name := "tele_" + first.os + "_" + first.arch
+	if err := os.Symlink(filepath.Join(inputs, "missing"), filepath.Join(inputs, name)); err != nil {
+		t.Fatal(err)
+	}
+	err := run("1.2.3", "abcdef0", t.TempDir(), inputs, "")
+	if err == nil || !strings.Contains(err.Error(), "regular non-symlink") {
+		t.Fatalf("run error = %v", err)
+	}
+	if err := run("1.2.3", "abcdef0", t.TempDir(), inputs, inputs); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("mutually exclusive error = %v", err)
+	}
+}
+
+func chdirRepositoryRoot(t *testing.T) {
+	t.Helper()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := filepath.Abs(filepath.Join(previous, "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previous); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+}
+
+func archiveEntry(t *testing.T, path, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zipper, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zipper.Close()
+	archive := tar.NewReader(zipper)
+	for {
+		header, err := archive.Next()
+		if err == io.EOF {
+			t.Fatalf("archive %s has no %s", path, name)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Name == name {
+			payload, err := io.ReadAll(archive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return payload
 		}
 	}
 }

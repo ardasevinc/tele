@@ -33,18 +33,20 @@ var releaseTargets = []target{
 }
 
 func main() {
-	var version, commit, output string
+	var version, commit, output, binaryInput, binaryOutput string
 	flag.StringVar(&version, "version", "", "release version without the v prefix")
 	flag.StringVar(&commit, "commit", "", "source commit SHA")
 	flag.StringVar(&output, "output", "dist", "artifact output directory")
+	flag.StringVar(&binaryInput, "binary-input", "", "package prebuilt target binaries from this directory")
+	flag.StringVar(&binaryOutput, "binary-output", "", "retain freshly built target binaries in this directory")
 	flag.Parse()
-	if err := run(version, commit, output); err != nil {
+	if err := run(version, commit, output, binaryInput, binaryOutput); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(version, commit, output string) error {
+func run(version, commit, output, binaryInput, binaryOutput string) error {
 	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
 	commit = strings.TrimSpace(commit)
 	if !versionPattern.MatchString(version) {
@@ -55,6 +57,9 @@ func run(version, commit, output string) error {
 	}
 	if strings.TrimSpace(output) == "" {
 		return errors.New("release output directory is required")
+	}
+	if binaryInput != "" && binaryOutput != "" {
+		return errors.New("binary input and binary output are mutually exclusive")
 	}
 	if err := os.MkdirAll(output, 0o755); err != nil { // #nosec G301 -- release artifacts are intentionally public-readable.
 		return err
@@ -67,16 +72,23 @@ func run(version, commit, output string) error {
 
 	checksums := make([]string, 0, len(releaseTargets))
 	for _, target := range releaseTargets {
-		binary := filepath.Join(tmp, target.os+"-"+target.arch, "tele")
-		if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil { // #nosec G301 -- temporary release inputs contain no secrets.
-			return err
-		}
-		ldflags := fmt.Sprintf("-s -w -buildid= -X github.com/ardasevinc/tele/internal/buildinfo.Version=%s -X github.com/ardasevinc/tele/internal/buildinfo.Commit=%s", version, commit)
-		cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags", ldflags, "-o", binary, "./cmd/tele") // #nosec G204 -- variables are validated or selected from a closed target list.
-		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+target.os, "GOARCH="+target.arch)
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("build %s/%s: %w", target.os, target.arch, err)
+		binaryName := fmt.Sprintf("tele_%s_%s", target.os, target.arch)
+		binary := filepath.Join(tmp, binaryName)
+		if binaryInput != "" {
+			binary = filepath.Join(binaryInput, binaryName)
+			if err := validateBinaryInput(binary); err != nil {
+				return fmt.Errorf("prebuilt %s/%s: %w", target.os, target.arch, err)
+			}
+		} else {
+			if err := buildBinary(binary, version, commit, target); err != nil {
+				return err
+			}
+			if binaryOutput != "" {
+				retained := filepath.Join(binaryOutput, binaryName)
+				if err := copyBinary(binary, retained); err != nil {
+					return fmt.Errorf("retain %s/%s binary: %w", target.os, target.arch, err)
+				}
+			}
 		}
 		name := fmt.Sprintf("tele_%s_%s_%s.tar.gz", version, target.os, target.arch)
 		archivePath := filepath.Join(output, name)
@@ -91,6 +103,55 @@ func run(version, commit, output string) error {
 	}
 	sort.Strings(checksums)
 	return os.WriteFile(filepath.Join(output, "checksums.txt"), []byte(strings.Join(checksums, "\n")+"\n"), 0o644) // #nosec G306 -- release checksums are intentionally public-readable.
+}
+
+func buildBinary(path, version, commit string, target target) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- temporary release inputs contain no secrets.
+		return err
+	}
+	ldflags := fmt.Sprintf("-s -w -buildid= -X github.com/ardasevinc/tele/internal/buildinfo.Version=%s -X github.com/ardasevinc/tele/internal/buildinfo.Commit=%s", version, commit)
+	cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags", ldflags, "-o", path, "./cmd/tele") // #nosec G204 -- variables are validated or selected from a closed target list.
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+target.os, "GOARCH="+target.arch)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("build %s/%s: %w", target.os, target.arch, err)
+	}
+	return nil
+}
+
+func validateBinaryInput(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("input must be a regular non-symlink file")
+	}
+	if info.Size() == 0 {
+		return errors.New("input must not be empty")
+	}
+	return nil
+}
+
+func copyBinary(sourcePath, targetPath string) (retErr error) {
+	if err := validateBinaryInput(sourcePath); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil { // #nosec G301 -- release inputs contain no secrets.
+		return err
+	}
+	source, err := os.Open(sourcePath) // #nosec G304 -- internally selected release path.
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, source.Close()) }()
+	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755) // #nosec G302,G304 -- executable release input.
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, target.Close()) }()
+	_, err = io.Copy(target, source)
+	return err
 }
 
 func writeArchive(path, binary, license string) (retErr error) {

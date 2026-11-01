@@ -44,7 +44,7 @@ macOS arm64 example requires the GitHub CLI:
 ```sh
 (
   set -eu
-  version=1.2.3
+  version=1.2.4
   asset="tele_${version}_darwin_arm64.tar.gz"
   tmp="$(mktemp -d)"
   cd "$tmp"
@@ -65,10 +65,10 @@ platform.
 Install the pinned stable version through the Go module proxy:
 
 ```sh
-go install github.com/ardasevinc/tele/cmd/tele@v1.2.3
+go install github.com/ardasevinc/tele/cmd/tele@v1.2.4
 ```
 
-To intentionally follow the newest published version, replace `@v1.2.3` with
+To intentionally follow the newest published version, replace `@v1.2.4` with
 `@latest`. Go-installed binaries report their module version as provenance;
 release archives and local-checkout installs report the exact source commit.
 
@@ -118,6 +118,20 @@ instance and migrate the verified vault into it. Do not delete old Keychain
 items or repeatedly approve access dialogs as an upgrade strategy.
 
 For one-shot interactive login, `tele auth login` still works.
+
+### Proxies
+
+Telegram traffic (MTProto) is tunneled through an HTTP CONNECT proxy when one
+is set. Tele reads the first non-empty value of `TELE_HTTP_PROXY`,
+`HTTPS_PROXY`, `HTTP_PROXY` (lowercase forms too), then
+`SAND_EGRESS_TUNNEL_PROXY_ADDR`. Values are `http://[user:pass@]host:port`; a
+bare `host:port` means `http://`. Other schemes are rejected rather than
+silently bypassed. This helps on sandboxed or locked-down Linux hosts where
+direct connections to Telegram data centers time out:
+
+```sh
+TELE_HTTP_PROXY=127.0.0.1:8791 tele auth status
+```
 
 `tele auth logout` revokes the Telegram authorization but deliberately retains
 local encrypted session material. Use `tele auth reset-local --yes` when you

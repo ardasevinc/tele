@@ -77,7 +77,12 @@ func (a App) runUnlocked(ctx context.Context, fn func(ctx context.Context, c *te
 	if profile.APIID == 0 {
 		return fmt.Errorf("missing api_id for profile %q; run tele config set api-id <id>", a.Profile)
 	}
+	resolver, err := mtprotoResolver()
+	if err != nil {
+		return err
+	}
 	client := telegram.NewClient(int(profile.APIID), string(hash), telegram.Options{
+		Resolver: resolver,
 		SessionStorage: telesession.EncryptedStorage{
 			Profile: a.Profile,
 			Store:   a.Secrets,
